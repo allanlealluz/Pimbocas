@@ -92,6 +92,10 @@ export function tickAbilitySystem(state: AbilitySystemState, deltaMs: number, no
     if (runtime.activeUntilMs !== null && nowMs >= runtime.activeUntilMs) {
       runtime.activeUntilMs = null;
     }
+    // Habilidade emprestada pela Cópia some quando o efeito termina.
+    if (runtime.borrowed && runtime.activeUntilMs === null && runtime.armedUntilMs === null) {
+      delete state.abilities[runtime.abilityId];
+    }
   }
 }
 
@@ -145,7 +149,11 @@ export function consumeArmedAbility(
   }
   runtime.armedUntilMs = null;
   // Janela mínima para o efeito valer no próprio chute que o disparou.
-  runtime.activeUntilMs = nowMs + Math.max(300, ability.effect.durationMs ?? 0);
+  // Habilidade copiada mantém o tempo total do empréstimo, não o da habilidade original.
+  const minimumUntilMs = nowMs + Math.max(300, ability.effect.durationMs ?? 0);
+  runtime.activeUntilMs = runtime.borrowed
+    ? Math.max(runtime.activeUntilMs ?? 0, minimumUntilMs)
+    : minimumUntilMs;
   return true;
 }
 
@@ -202,6 +210,13 @@ export interface AbilityModifiers {
   brute: boolean;
   bruteSpeedMult: number;
   bruteBounce: number;
+  /** Roletada */
+  roletada: boolean;
+  roletadaSpeedMult: number;
+  lockMovementMs: number;
+  /** Rebote */
+  rebote: boolean;
+  rebotePower: number;
   activeIds: string[];
 }
 
@@ -238,6 +253,11 @@ export const NEUTRAL_MODIFIERS: AbilityModifiers = {
   brute: false,
   bruteSpeedMult: 1,
   bruteBounce: 0.82,
+  roletada: false,
+  roletadaSpeedMult: 1,
+  lockMovementMs: 0,
+  rebote: false,
+  rebotePower: 1,
   activeIds: [],
 };
 
@@ -313,6 +333,15 @@ export function getAbilityModifiers(
         mods.brute = true;
         mods.bruteSpeedMult = Math.max(mods.bruteSpeedMult, ability.effect.bruteSpeedMult ?? 1.5);
         mods.bruteBounce = Math.max(mods.bruteBounce, ability.effect.bruteBounce ?? 0.95);
+        break;
+      case "roletada":
+        mods.roletada = true;
+        mods.roletadaSpeedMult = Math.max(mods.roletadaSpeedMult, ability.effect.roletadaSpeedMult ?? 1.35);
+        mods.lockMovementMs = Math.max(mods.lockMovementMs, ability.effect.lockMovementMs ?? 1400);
+        break;
+      case "rebote":
+        mods.rebote = true;
+        mods.rebotePower = Math.max(mods.rebotePower, ability.effect.rebotePower ?? 1.25);
         break;
     }
     mods.activeIds.push(ability.id);

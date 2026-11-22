@@ -9,6 +9,7 @@ import {
   type PlayerProfile,
 } from "../net/firebase";
 import {
+  abilityInfoHtml,
   BAR_PRESETS,
   createHeroDraft,
   draftFromHero,
@@ -29,6 +30,53 @@ import {
   type ScreenName,
 } from "./screens";
 
+type ImageKind = "face" | "body";
+
+/** Reduz uploads a um data URL pequeno o suficiente para Firestore/localStorage. */
+async function fileToDataUrl(file: File, maxSize: number): Promise<string> {
+  if (!file.type.startsWith("image/")) throw new Error("Arquivo não é uma imagem.");
+  if (file.size > 8 * 1024 * 1024) throw new Error("Imagem muito grande (máximo 8 MB).");
+  const original = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Não foi possível abrir a imagem."));
+    img.src = original;
+  });
+  const scale = Math.min(1, maxSize / Math.max(1, image.width, image.height));
+  if (scale === 1 && original.length < 180_000) return original;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas indisponível.");
+  const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
+  if (mime === "image/jpeg") {
+    ctx.fillStyle = "#fffaf0";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  let result = canvas.toDataURL(mime, 0.82);
+  // PNG com muitos detalhes pode estourar o limite do documento no Firestore.
+  if (mime === "image/png" && result.length > 500_000) {
+    const flat = document.createElement("canvas");
+    flat.width = canvas.width;
+    flat.height = canvas.height;
+    const flatCtx = flat.getContext("2d");
+    if (!flatCtx) return result;
+    flatCtx.fillStyle = "#fffaf0";
+    flatCtx.fillRect(0, 0, flat.width, flat.height);
+    flatCtx.drawImage(canvas, 0, 0);
+    result = flat.toDataURL("image/jpeg", 0.78);
+  }
+  return result;
+}
+
 export interface AppFlowOptions {
   root: HTMLElement;
   gameScreen: HTMLElement;
@@ -46,6 +94,7 @@ export class AppFlow {
   private service: FirebaseService = createFirebaseService();
 
   private screen: ScreenName = "auth";
+  private paused = false;
   private authMode: AuthMode = "login";
   private profile: PlayerProfile | null = null;
   private selectedHeroId = "coringa";
@@ -61,15 +110,37 @@ export class AppFlow {
 
     this.root.addEventListener("click", (e) => this.onClick(e));
     this.root.addEventListener("submit", (e) => void this.onSubmit(e));
-    this.root.addEventListener("input", (e) => this.onInput(e));
-    this.root.addEventListener("change", (e) => this.onInput(e));
-    this.gameScreen.querySelector("[data-exit-match]")?.addEventListener("click", () => this.exitMatch());
+    this.root.addEventListener("input", (e) => void this.onInput(e));
+    this.root.addEventListener("change", (e) => void this.onInput(e));
+    this.root.addEventListener("mouseover", (e) => this.onAbilityHover(e));
+    this.gameScreen.querySelector("[data-open-pause]")?.addEventListener("click", () => this.setPaused(true));
+    this.gameScreen.querySelectorAll<HTMLElement>("[data-pause-action]").forEach((button) => {
+      button.addEventListener("click", () => this.onPauseAction(button.dataset.pauseAction));
+    });
     window.addEventListener("keydown", (e) => {
-      if (e.code === "Escape" && this.screen === "game") this.exitMatch();
+      if (e.code === "Escape" && this.screen === "game") {
+        e.preventDefault();
+        this.setPaused(!this.paused);
+      }
     });
   }
 
-  isPlaying(): boolean { return this.screen === "game"; }
+  isPlaying(): boolean { return this.screen === "game" && !this.paused; }
+
+  private setPaused(paused: boolean): void {
+    this.paused = paused;
+    const menu = this.gameScreen.querySelector<HTMLElement>("#pause-menu");
+    if (menu) menu.hidden = !paused;
+  }
+
+  private onPauseAction(action?: string): void {
+    switch (action) {
+      case "resume": this.setPaused(false); break;
+      case "restart": this.restartMatch(); break;
+      case "select": this.changeCharacter(); break;
+      case "menu": this.exitMatch(); break;
+    }
+  }
 
   async start(): Promise<void> {
     this.show("auth");
@@ -87,6 +158,7 @@ export class AppFlow {
     this.screen = screen;
     this.root.hidden = screen === "game";
     this.gameScreen.hidden = screen !== "game";
+    if (screen !== "game") this.setPaused(false);
     if (screen !== "game") this.render();
   }
 
@@ -112,11 +184,26 @@ export class AppFlow {
 
   private startMatch(): void {
     if (!this.profile) return;
+    this.setPaused(false);
     this.show("game");
     this.onStartMatch(this.selectedHeroId, this.difficulty);
   }
 
+  private restartMatch(): void {
+    if (!this.profile) return;
+    this.setPaused(false);
+    this.onStartMatch(this.selectedHeroId, this.difficulty);
+  }
+
+  private changeCharacter(): void {
+    if (!this.profile) return;
+    this.setPaused(false);
+    this.onEndMatch();
+    this.show("select");
+  }
+
   private exitMatch(): void {
+    this.setPaused(false);
     this.onEndMatch();
     this.show("menu");
   }
@@ -138,6 +225,23 @@ export class AppFlow {
     const el = this.root.querySelector<HTMLElement>("[data-error]");
     if (el) el.textContent = message;
     else console.warn("[Pimbocas]", message);
+  }
+
+  private showAbilityInfo(id: string, count?: number): void {
+    const panel = this.root.querySelector<HTMLElement>("[data-ability-info]");
+    if (!panel) return;
+    const total = count || this.draft.abilities.length || 4;
+    panel.dataset.abilityInfoId = id;
+    panel.innerHTML = abilityInfoHtml(id, total);
+  }
+
+  private onAbilityHover(event: MouseEvent): void {
+    if (this.busy) return;
+    const el = (event.target as HTMLElement).closest<HTMLElement>("[data-ability-info-id]");
+    if (!el?.dataset.abilityInfoId) return;
+    const panel = this.root.querySelector<HTMLElement>("[data-ability-info]");
+    if (!panel || panel.dataset.abilityInfoId === el.dataset.abilityInfoId) return;
+    this.showAbilityInfo(el.dataset.abilityInfoId, Number(el.dataset.abilityCount) || undefined);
   }
 
   private setBusy(busy: boolean): void {
@@ -162,7 +266,13 @@ export class AppFlow {
   // ---------- Eventos ----------
 
   private onClick(event: MouseEvent): void {
-    const el = (event.target as HTMLElement).closest<HTMLElement>(
+    const target = event.target as HTMLElement;
+    const infoEl = target.closest<HTMLElement>("[data-ability-info-id]");
+    if (infoEl?.dataset.abilityInfoId) {
+      const count = Number(infoEl.dataset.abilityCount);
+      this.showAbilityInfo(infoEl.dataset.abilityInfoId, count || undefined);
+    }
+    const el = target.closest<HTMLElement>(
       "[data-action],[data-auth-tab],[data-select-hero],[data-edit-hero],[data-delete-hero],[data-difficulty],[data-color],[data-bar-preset]",
     );
     if (!el || this.busy) return;
@@ -282,8 +392,36 @@ export class AppFlow {
     }
   }
 
-  private onInput(event: Event): void {
+  private async onInput(event: Event): Promise<void> {
     const el = event.target as HTMLInputElement | HTMLSelectElement;
+    const imageKind = el.dataset?.image as ImageKind | undefined;
+    if (imageKind === "face" || imageKind === "body") {
+      const file = (el as HTMLInputElement).files?.[0];
+      if (!file) return;
+      try {
+        const dataUrl = await fileToDataUrl(file, imageKind === "face" ? 256 : 512);
+        if (imageKind === "face") this.draft.faceImage = dataUrl;
+        else this.draft.bodyImage = dataUrl;
+        const preview = this.root.querySelector<HTMLElement>(`[data-image-preview="${imageKind}"]`);
+        if (preview) preview.innerHTML = `<img src="${dataUrl}" alt="">`;
+        if (imageKind === "face") {
+          const avatar = this.root.querySelector<HTMLElement>(".preview-avatar");
+          let img = avatar?.querySelector<HTMLImageElement>(".avatar-face");
+          if (avatar && !img) {
+            img = document.createElement("img");
+            img.className = "avatar-face";
+            avatar.prepend(img);
+          }
+          if (img) img.src = dataUrl;
+        } else {
+          const bodyPreview = this.root.querySelector<HTMLElement>("[data-body-preview]");
+          if (bodyPreview) bodyPreview.innerHTML = `<img class="hero-body-art preview-body" src="${dataUrl}" alt="Corpo do herói">`;
+        }
+      } catch (error) {
+        this.setError(error instanceof Error ? error.message : "Não foi possível ler a imagem.");
+      }
+      return;
+    }
     const nameField = el.dataset?.draftInput;
     if (nameField === "name") {
       this.draft.name = el.value;
@@ -316,13 +454,22 @@ export class AppFlow {
     }
     if (el.dataset?.ability !== undefined) {
       const checkbox = el as HTMLInputElement;
-      if (checkbox.checked && this.draft.abilities.length >= 2) {
+      if (checkbox.checked && this.draft.abilities.length >= 4) {
         checkbox.checked = false;
-        this.setError("Escolha no máximo 2 habilidades.");
+        this.setError("Escolha no máximo 4 habilidades.");
         return;
       }
       this.draft.abilities = Array.from(this.root.querySelectorAll<HTMLInputElement>("input[data-ability]:checked"))
         .map((input) => input.value);
+      const total = this.root.querySelector<HTMLElement>("[data-ability-total]");
+      if (total) total.textContent = String(this.draft.abilities.length);
+      this.root.querySelectorAll<HTMLElement>("[data-ability-info-id][data-ability-count]").forEach((option) => {
+        option.dataset.abilityCount = String(this.draft.abilities.length);
+      });
+      const panel = this.root.querySelector<HTMLElement>("[data-ability-info]");
+      if (panel?.dataset.abilityInfoId) {
+        panel.innerHTML = abilityInfoHtml(panel.dataset.abilityInfoId, this.draft.abilities.length || 2);
+      }
     }
   }
 
@@ -342,7 +489,8 @@ export class AppFlow {
     const total = STAT_KEYS.reduce((sum, key) => sum + this.draft.stats[key], 0);
     if (name.length < 2) return this.setError("Dê um nome com pelo menos 2 caracteres.");
     if (total > STAT_BUDGET) return this.setError(`Você gastou ${total} pontos; o limite é ${STAT_BUDGET}.`);
-    if (this.draft.abilities.length === 0) return this.setError("Escolha pelo menos 1 habilidade.");
+    if (this.draft.abilities.length < 2) return this.setError("Escolha pelo menos 2 habilidades.");
+    if (this.draft.abilities.length > 4) return this.setError("Escolha no máximo 4 habilidades.");
 
     const preset = BAR_PRESETS.find((p) => p.id === this.draft.barPreset) ?? BAR_PRESETS[1];
     const hero: HeroDefinition = {
@@ -354,6 +502,8 @@ export class AppFlow {
       specialBar: { segments: [...preset.segments] },
       abilities: [...this.draft.abilities],
       color: HERO_COLORS.includes(this.draft.color) ? this.draft.color : HERO_COLORS[2],
+      faceImage: this.draft.faceImage,
+      bodyImage: this.draft.bodyImage,
       custom: true,
     };
 

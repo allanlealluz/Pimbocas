@@ -56,6 +56,7 @@ export function renderField(
   if (match.elastic) drawElasticOrbit(ctx, match.elastic, match.nowMs);
   drawEffects(ctx, match.effects);
   drawRods(ctx, match.rods, w, h, selectedRodId, previewAbilityId, rodFx);
+  if (match.nowMs < match.lockMovementUntilMs) drawMovementLock(ctx, match);
   drawBall(ctx, match.ball, ballGlow ? ABILITY_COLORS[ballGlow] : undefined);
   drawScore(ctx, match.score.left, match.score.right, w, match.stage);
   if (match.toast) drawToast(ctx, match.toast);
@@ -245,6 +246,55 @@ function drawPitch(ctx: CanvasRenderingContext2D, w: number, h: number, goalMout
   ctx.strokeStyle = "rgba(255,255,255,0.9)";
   ctx.strokeRect(0, goalTop, 18, goalMouth);
   ctx.strokeRect(w - 18, goalTop, 18, goalMouth);
+
+  // Queda natural da mesa: as pontas ficam mais escuras e setas apontam aos gols.
+  const slope = ctx.createLinearGradient(0, 0, w, 0);
+  slope.addColorStop(0, "rgba(0,0,0,0.16)");
+  slope.addColorStop(0.5, "rgba(255,255,255,0.03)");
+  slope.addColorStop(1, "rgba(0,0,0,0.16)");
+  ctx.fillStyle = slope;
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.globalAlpha = 0.22;
+  ctx.strokeStyle = "#eaffd0";
+  ctx.lineWidth = 2;
+  for (const y of [h * 0.28, h * 0.72]) {
+    ctx.beginPath();
+    ctx.moveTo(78, y); ctx.lineTo(58, y - 6);
+    ctx.moveTo(78, y); ctx.lineTo(58, y + 6);
+    ctx.moveTo(w - 78, y); ctx.lineTo(w - 58, y - 6);
+    ctx.moveTo(w - 78, y); ctx.lineTo(w - 58, y + 6);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Roletada: aviso de que o manete está travado enquanto a bola dispara. */
+function drawMovementLock(ctx: CanvasRenderingContext2D, match: MatchState): void {
+  const color = ABILITY_COLORS.roletada ?? "#b28cff";
+  const remaining = Math.max(0, (match.lockMovementUntilMs - match.nowMs) / 1000).toFixed(1);
+  ctx.save();
+  for (const rod of match.rods) {
+    if (rod.side !== "left") continue;
+    const x = rod.xRatio * match.field.width;
+    ctx.fillStyle = "rgba(10,8,20,0.85)";
+    ctx.beginPath(); ctx.arc(x, 24, 13, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = hexToRgba(color, 0.95);
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.font = "900 13px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("✕", x, 24);
+  }
+  ctx.fillStyle = hexToRgba(color, 0.95);
+  ctx.font = "900 14px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(`MANETE TRAVADO ${remaining}s`, match.field.width / 2, match.field.height - 34);
+  ctx.restore();
 }
 
 /** Fogo nas bordas da arena quando a partida fica sem gol por muito tempo. */
@@ -341,6 +391,32 @@ function drawAbilityFields(ctx: CanvasRenderingContext2D, match: MatchState): vo
       ctx.lineDashOffset = -t / 55;
       ctx.beginPath(); ctx.arc(x, y, radius * 0.55, 0, Math.PI * 2); ctx.stroke();
       ctx.restore();
+    }
+  }
+
+  // Rebote: brilho nos bonecos que estão prontos para o contra-ataque.
+  if (match.reboteCounterAvailable) {
+    const color = ABILITY_COLORS.rebote ?? "#7cffb2";
+    for (const rodId of ["goleiro", "defesa"] as const) {
+      const rod = match.rods.find((r) => r.side === "left" && r.id === rodId);
+      if (!rod) continue;
+      const mods = getHeroModifiers(match, rodId);
+      if (!mods.rebote) continue;
+      const x = rod.xRatio * match.field.width;
+      for (const y of getRodFiguresY(rod, match.field.height)) {
+        ctx.save();
+        const aura = ctx.createRadialGradient(x, y, 4, x, y, 34);
+        aura.addColorStop(0, hexToRgba(color, 0.3));
+        aura.addColorStop(1, hexToRgba(color, 0));
+        ctx.fillStyle = aura;
+        ctx.beginPath(); ctx.arc(x, y, 34, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = hexToRgba(color, 0.65 + 0.3 * Math.sin(t / 120));
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.lineDashOffset = -t / 35;
+        ctx.beginPath(); ctx.arc(x, y, 24, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
     }
   }
 }

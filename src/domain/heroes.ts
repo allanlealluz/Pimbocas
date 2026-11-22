@@ -69,6 +69,57 @@ export const HEROES: Record<string, HeroDefinition> = {
     abilities: ["cruzador_estelar", "chute_fantasma", "combo_breaker", "elastico"],
     color: "#ff6bd6",
   },
+  paulo: {
+    id: "paulo",
+    name: "Paulo",
+    role: "coringa",
+    description:
+      "O coringa versátil: tem o Chute Relâmpago e a Cópia, que empresta por alguns segundos a habilidade de outro herói — perto da bola, ele escolhe a que melhor cabe na jogada.",
+    stats: {
+      kickPower: 60,
+      ballControl: 55,
+      rodSpeed: 45,
+      defense: 20,
+      goalkeeping: 20,
+    },
+    specialBar: { segments: [30, 30, 40] },
+    abilities: ["chute_relampago", "copia"],
+    color: "#ffe7a3",
+  },
+  jhonas: {
+    id: "jhonas",
+    name: "Jhonas a Sombra",
+    role: "defensivo",
+    description:
+      "Zagueiro de chute e goleiro altos. Defende com o Chute de Goleiro e destrói a mesa com a Roletada: uma bomba sem controle que trava o manete por um instante.",
+    stats: {
+      kickPower: 80,
+      ballControl: 15,
+      rodSpeed: 20,
+      defense: 30,
+      goalkeeping: 55,
+    },
+    specialBar: { segments: [50, 50] },
+    abilities: ["chute_goleiro", "roletada"],
+    color: "#b28cff",
+  },
+  kenji: {
+    id: "kenji",
+    name: "Kenji",
+    role: "defensivo",
+    description:
+      "Defensor com alma de atacante: fica no aguardo com o Rebote e, se a bola bater nele, contra-ataca com um chute forte. Também sabe travar o caminho com o Bloqueio Pesado.",
+    stats: {
+      kickPower: 55,
+      ballControl: 25,
+      rodSpeed: 30,
+      defense: 60,
+      goalkeeping: 30,
+    },
+    specialBar: { segments: [30, 30, 40] },
+    abilities: ["bloqueio_pesado", "rebote"],
+    color: "#7cffb2",
+  },
 };
 
 /** Heróis criados pelo jogador, registrados em memória após o login. */

@@ -1,5 +1,12 @@
 import type { AbilityDefinition } from "./types";
 
+/** Quanto menos habilidades o herói tem, mais forte cada uma delas. */
+export const ABILITY_POWER_BY_COUNT: Record<number, number> = { 2: 1.25, 3: 1.12, 4: 1 };
+
+export function getAbilityPowerMult(abilityCount: number): number {
+  return ABILITY_POWER_BY_COUNT[abilityCount] ?? 1;
+}
+
 export const ABILITY_COLORS: Record<string, string> = {
   chute_diagonal: "#ffb347",
   bloqueio_pesado: "#6fd7ff",
@@ -13,6 +20,9 @@ export const ABILITY_COLORS: Record<string, string> = {
   chute_relampago: "#f6ff6b",
   elastico: "#ff8ad8",
   forca_bruta: "#ff5d5d",
+  copia: "#ffe7a3",
+  roletada: "#b28cff",
+  rebote: "#7cffb2",
 };
 
 export const ABILITIES: Record<string, AbilityDefinition> = {
@@ -245,6 +255,60 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
       bruteBounce: 0.95,
       durationMs: 1800,
       tag: "brute_force",
+    },
+  },
+  copia: {
+    id: "copia",
+    name: "Cópia",
+    hint: "CÓPIA · rouba a habilidade de outro herói por alguns segundos",
+    description:
+      "Paulo observa a mesa e empresta uma habilidade de outro personagem por alguns segundos. A habilidade copiada aparece como um slot extra e não gasta energia. A escolha favorece quem está perto da bola: defesa perto do gol, chute perto do ataque.",
+    role: "coringa",
+    cost: 30,
+    cooldownMs: 12000,
+    allowedRods: ["goleiro", "defesa", "meio", "ataque"],
+    trigger: "timed",
+    effect: {
+      durationMs: 9000,
+      tag: "copy",
+    },
+  },
+  roletada: {
+    id: "roletada",
+    name: "Roletada",
+    hint: "ROLETADA · bomba sem controle, manete travado por 1,4 s",
+    description:
+      "Jhonas gira o braço e dispara uma bomba muito mais forte, mas sem nenhum controle: a bola sai com giro e direção imprevisíveis. O esforço trava o manete por um instante, impedindo mover a barra.",
+    role: "defensivo",
+    cost: 40,
+    cooldownMs: 12000,
+    allowedRods: ["goleiro", "defesa", "meio", "ataque"],
+    trigger: "next_kick",
+    activationWindowMs: 1600,
+    effect: {
+      ballSpeedMult: 1.2,
+      kickPowerMult: 1.25,
+      roletadaSpeedMult: 1.35,
+      lockMovementMs: 1400,
+      durationMs: 1800,
+      tag: "roletada",
+    },
+  },
+  rebote: {
+    id: "rebote",
+    name: "Rebote",
+    hint: "REBOTE · boneco no aguardo e contra-ataque forte",
+    description:
+      "Kenji fica alguns segundos pronto no boneco. Se a bola bater nele nessa janela, ele devolve um chute forte de atacante na hora. Só funciona uma vez por ativação.",
+    role: "ofensivo",
+    cost: 30,
+    cooldownMs: 10000,
+    allowedRods: ["goleiro", "defesa"],
+    trigger: "timed",
+    effect: {
+      durationMs: 3200,
+      rebotePower: 1.25,
+      tag: "rebote",
     },
   },
 };

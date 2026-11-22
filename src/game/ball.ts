@@ -32,6 +32,8 @@ export interface BallState {
   lightningBounce: boolean;
   /** Chute Relâmpago: reforço de velocidade aplicado na quicada. */
   lightningSpeedMult: number;
+  /** Chute Relâmpago: gol alvo (1 = direita, -1 = esquerda). */
+  lightningDir: 1 | -1;
   /** Força Bruta: tempo restante de quicada elástica. */
   bruteMs: number;
   bruteBounce: number;
@@ -53,6 +55,12 @@ export const DEFAULT_FIELD: FieldConfig = {
   goalDepth: 18,
 };
 
+/**
+ * Queda natural da mesa de pebolim: cada lado é levemente inclinado na direção
+ * do seu gol. Quanto mais perto do gol, mais forte o "puxão" da gravidade.
+ */
+export const FIELD_SLOPE_ACCEL = 34; // px/s² no fim da mesa
+
 /** Limpa estados especiais deixados por habilidades na bola. */
 export function clearBallEffects(ball: BallState): void {
   ball.guideVx = 0;
@@ -67,6 +75,7 @@ export function clearBallEffects(ball: BallState): void {
   ball.untouchedGoalKick = false;
   ball.lightningBounce = false;
   ball.lightningSpeedMult = 1;
+  ball.lightningDir = 1;
   ball.bruteMs = 0;
   ball.bruteBounce = 0.82;
 }
@@ -91,6 +100,7 @@ export function createBall(field: FieldConfig = DEFAULT_FIELD): BallState {
     untouchedGoalKick: false,
     lightningBounce: false,
     lightningSpeedMult: 1,
+    lightningDir: 1,
     bruteMs: 0,
     bruteBounce: 0.82,
     heat: 0,
@@ -165,6 +175,12 @@ export function updateBall(ball: BallState, deltaMs: number, field: FieldConfig 
   ball.vel.y += ball.spin * 55 * dt;
   ball.spin *= Math.pow(1 - 0.014 * retention, deltaMs / 16.67);
 
+  // Queda da mesa: do meio para a lateral, a bola é puxada em direção ao gol.
+  const centerX = field.width / 2;
+  const slopeSide = ball.pos.x < centerX ? -1 : 1;
+  const slopeRatio = Math.min(1, Math.abs(ball.pos.x - centerX) / (field.width / 2));
+  ball.vel.x += slopeSide * FIELD_SLOPE_ACCEL * slopeRatio * dt;
+
   ball.pos.x += ball.vel.x * dt;
   ball.pos.y += ball.vel.y * dt;
   ball.roll += (Math.hypot(ball.vel.x, ball.vel.y) / ball.radius) * dt;
@@ -204,7 +220,10 @@ export function updateBall(ball: BallState, deltaMs: number, field: FieldConfig 
     if (ball.lightningBounce) {
       const boost = Math.max(1, ball.lightningSpeedMult);
       const speed = Math.hypot(ball.vel.x, ball.vel.y) * boost;
-      const dx = field.width - ball.radius - 2 - ball.pos.x;
+      const targetX = ball.lightningDir === 1
+        ? field.width - ball.radius - 2
+        : ball.radius + 2;
+      const dx = targetX - ball.pos.x;
       const dy = field.height / 2 - ball.pos.y;
       const len = Math.hypot(dx, dy) || 1;
       ball.vel.x = (dx / len) * speed * 0.94;

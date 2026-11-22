@@ -40,6 +40,11 @@ export interface AbilityEffect {
   /** Força Bruta: multiplicador de velocidade e restituição na quicada. */
   bruteSpeedMult?: number;
   bruteBounce?: number;
+  /** Roletada: velocidade extra e tempo em que o manete fica travado. */
+  roletadaSpeedMult?: number;
+  lockMovementMs?: number;
+  /** Rebote: força do contra-ataque quando a bola bate na barra. */
+  rebotePower?: number;
   /** Rótulo livre para prototipagem */
   tag?: string;
 }
@@ -110,6 +115,8 @@ export interface AbilityRuntimeState {
   armedUntilMs: number | null;
   /** Efeito temporário ativo até este timestamp */
   activeUntilMs: number | null;
+  /** Habilidade emprestada pela Cópia (removida quando o efeito acaba). */
+  borrowed?: boolean;
 }
 
 export type ChargeEventType =

@@ -7,6 +7,7 @@ import {
 } from "./game/input";
 import {
   createDemoMatch,
+  getEquippedAbilityIds,
   movePlayerRod,
   performKick,
   tryActivateAbility,
@@ -89,7 +90,7 @@ attachInputListeners(window, DEFAULT_CONTROL_SCHEME, input, {
   },
   onAbilitySlot: (slotIndex) => {
     if (!match) return;
-    const abilityId = match.localPlayer.hero.abilities[slotIndex];
+    const abilityId = getEquippedAbilityIds(match)[slotIndex];
     if (!abilityId) return;
     tryActivateAbility(match, abilityId, performance.now());
   },
@@ -100,11 +101,21 @@ Object.assign(window, { input, HEROES, flow });
 Object.defineProperty(window, "match", { get: () => match, configurable: true });
 
 let last = performance.now();
+let wasPlaying = false;
 function loop(now: number): void {
   const deltaMs = Math.min(100, now - last);
   last = now;
 
-  if (match && flow.isPlaying()) {
+  const playing = !!match && flow.isPlaying();
+  // Ao pausar, solta as teclas seguradas para não mover a barra ao voltar.
+  if (wasPlaying && !playing && match) {
+    input.moveAxis = 0;
+    input.charging = null;
+    for (const rod of match.rods) rod.charge = 0;
+  }
+  wasPlaying = playing;
+
+  if (playing && match) {
     if (input.moveAxis !== 0) {
       movePlayerRod(match, input.selectedRod, input.moveAxis, deltaMs);
     }

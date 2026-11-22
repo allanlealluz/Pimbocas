@@ -1,8 +1,8 @@
-import { ABILITIES, ABILITY_COLORS } from "../domain/abilities";
+import { ABILITIES, ABILITY_COLORS, getAbilityPowerMult } from "../domain/abilities";
 import { listHeroes } from "../domain/heroes";
 import { ROLE_CHARGE_SUMMARY } from "../domain/roles";
 import { STAT_BUDGET, STAT_MAX, STAT_MIN, STAT_REFERENCE, STAT_STEP } from "../domain/stats";
-import type { HeroDefinition, HeroStats, Role } from "../domain/types";
+import type { AbilityTrigger, HeroDefinition, HeroStats, RodId, Role } from "../domain/types";
 import type { AiDifficulty } from "../game/match";
 import type { PlayerProfile } from "../net/firebase";
 
@@ -15,6 +15,20 @@ export const ROLE_LABELS: Record<Role, string> = {
   ofensivo: "Ofensivo",
   defensivo: "Defensivo",
   coringa: "Coringa",
+};
+
+export const ROD_LABELS: Record<RodId, string> = {
+  goleiro: "Goleiro (Q)",
+  defesa: "Defesa (W)",
+  meio: "Meio (E)",
+  ataque: "Ataque (R)",
+};
+
+const TRIGGER_LABELS: Record<AbilityTrigger, string> = {
+  instant: "Imediata",
+  next_kick: "Próximo chute",
+  next_defense: "Próxima defesa",
+  timed: "Ativa por tempo",
 };
 
 export const DIFFICULTY_LABELS: Record<AiDifficulty, { name: string; detail: string }> = {
@@ -58,6 +72,8 @@ export interface HeroDraft {
   stats: HeroStats;
   barPreset: BarPresetId;
   abilities: string[];
+  faceImage?: string;
+  bodyImage?: string;
 }
 
 export const HERO_COLORS = ["#ff9f43", "#6fd7ff", "#c792ff", "#8affc1", "#ff5d8f", "#ffd166"];
@@ -69,7 +85,7 @@ export function createHeroDraft(): HeroDraft {
     color: HERO_COLORS[2]!,
     stats: { kickPower: 30, ballControl: 30, rodSpeed: 30, defense: 30, goalkeeping: 30 },
     barPreset: "tatico",
-    abilities: ["leitura_de_jogo"],
+    abilities: ["leitura_de_jogo", "chute_diagonal"],
   };
 }
 
@@ -84,6 +100,8 @@ export function draftFromHero(hero: HeroDefinition): HeroDraft {
     stats: { ...hero.stats },
     barPreset: preset?.id ?? "tatico",
     abilities: [...hero.abilities],
+    faceImage: hero.faceImage,
+    bodyImage: hero.bodyImage,
   };
 }
 
@@ -97,9 +115,24 @@ function initials(name: string): string {
   return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0] ?? "").join("").toUpperCase() || "?";
 }
 
-export function heroAvatar(hero: { name: string; color?: string }, cssClass = ""): string {
+export function heroAvatar(hero: { name: string; color?: string; faceImage?: string }, cssClass = ""): string {
   const color = hero.color ?? (hero.name === "Rafa Artilheiro" ? HERO_COLORS[0]! : hero.name === "Duda Muralha" ? HERO_COLORS[1]! : HERO_COLORS[2]!);
-  return `<span class="hero-avatar ${cssClass}" style="--hero-color:${color}"><span>${escapeHtml(initials(hero.name))}</span></span>`;
+  const face = hero.faceImage
+    ? `<img class="avatar-face" src="${escapeHtml(hero.faceImage)}" alt="">`
+    : "";
+  return `<span class="hero-avatar ${cssClass}" style="--hero-color:${color}">${face}<span>${escapeHtml(initials(hero.name))}</span></span>`;
+}
+
+/** Arte de corpo inteiro no criador; placeholder enquanto não há upload. */
+function bodyArt(hero: { name: string; color?: string; bodyImage?: string }, cssClass = ""): string {
+  const color = hero.color ?? HERO_COLORS[2]!;
+  if (hero.bodyImage) {
+    return `<img class="hero-body-art ${cssClass}" src="${escapeHtml(hero.bodyImage)}" alt="Corpo de ${escapeHtml(hero.name || "Novo Herói")}">`;
+  }
+  return `<div class="hero-body-art placeholder ${cssClass}" style="--hero-color:${color}">
+    <span>${escapeHtml(initials(hero.name || "Novo Herói"))}</span>
+    <small>envie uma imagem do corpo</small>
+  </div>`;
 }
 
 function statBars(stats: HeroStats, compact = false): string {
@@ -115,8 +148,33 @@ function abilityChips(hero: HeroDefinition): string {
   return hero.abilities.map((id) => {
     const ability = ABILITIES[id];
     if (!ability) return "";
-    return `<span class="ability-chip" style="--chip-color:${ABILITY_COLORS[id] ?? "#ffd9a0"}">${escapeHtml(ability.name)}</span>`;
+    return `<button type="button" class="ability-chip" data-ability-info-id="${escapeHtml(id)}" data-ability-count="${hero.abilities.length}" style="--chip-color:${ABILITY_COLORS[id] ?? "#ffd9a0"}">${escapeHtml(ability.name)}</button>`;
   }).join("");
+}
+
+/** Painel de detalhes: o que faz, onde usa, custo e bônus por quantidade. */
+export function abilityInfoHtml(abilityId: string, abilityCount = 4): string {
+  const ability = ABILITIES[abilityId];
+  if (!ability) return `<p class="ability-detail-empty">Selecione uma habilidade.</p>`;
+  const color = ABILITY_COLORS[ability.id] ?? "#ffd9a0";
+  const power = getAbilityPowerMult(abilityCount);
+  const bonus = power === 1 ? "padrão" : `+${Math.round((power - 1) * 100)}%`;
+  const rods = ability.allowedRods.map((rod) => ROD_LABELS[rod]).join(" · ");
+  return `
+    <div class="ability-detail-card" style="--chip-color:${color}">
+      <div class="ability-detail-head">
+        <b>${escapeHtml(ability.name)}</b>
+        <span>${ROLE_LABELS[ability.role]}</span>
+      </div>
+      <p>${escapeHtml(ability.description)}</p>
+      <div class="ability-detail-grid">
+        <div><small>BARRA</small><b>${rods}</b></div>
+        <div><small>GATILHO</small><b>${TRIGGER_LABELS[ability.trigger]}</b></div>
+        <div><small>CUSTO</small><b>${ability.cost} energia</b></div>
+        <div><small>RECUPERAÇÃO</small><b>${(ability.cooldownMs / 1000).toFixed(0)}s</b></div>
+        <div><small>PODER AQUI</small><b>${bonus} (${abilityCount} habs)</b></div>
+      </div>
+    </div>`;
 }
 
 function heroCard(hero: HeroDefinition, selected: boolean): string {
@@ -125,6 +183,7 @@ function heroCard(hero: HeroDefinition, selected: boolean): string {
     <article class="hero-card ${selected ? "selected" : ""}" style="--hero-color:${hero.color ?? HERO_COLORS[2]!}">
       <div class="hero-card-head">
         ${heroAvatar(hero)}
+        ${hero.bodyImage ? `<img class="hero-body-thumb" src="${escapeHtml(hero.bodyImage)}" alt="">` : ""}
         <div>
           <span class="role-badge">${ROLE_LABELS[hero.role]}</span>
           <h3>${escapeHtml(hero.name)}</h3>
@@ -151,6 +210,14 @@ function brand(): string {
   return `<div class="brand"><span class="brand-icon">P</span><div><strong>PIMBOCAS</strong><small>Pebolim Heroes</small></div></div>`;
 }
 
+/** Decoração de boteco reaproveitada nos menus. */
+function barDecor(): string {
+  return `<div class="bar-decor" aria-hidden="true">
+    <span class="bottle"></span><span class="bottle amber"></span><span class="bottle"></span><span class="bottle amber"></span><span class="bottle"></span>
+    <span class="decor-glass"></span><span class="decor-glass"></span>
+  </div>`;
+}
+
 function appHeader(profile: PlayerProfile): string {
   return `
     <header class="app-header">
@@ -166,7 +233,20 @@ export function authScreen(mode: AuthMode): string {
   const registering = mode === "register";
   return `
     <section class="screen auth-screen">
-      <div class="auth-bg-orb orb-one"></div><div class="auth-bg-orb orb-two"></div>
+      <div class="bar-scene" aria-hidden="true">
+        <div class="awning"></div>
+        <div class="pendant pendant-1"></div><div class="pendant pendant-2"></div>
+        <div class="bottle-row">
+          <span class="bottle"></span><span class="bottle amber"></span><span class="bottle"></span>
+          <span class="bottle amber"></span><span class="bottle"></span><span class="bottle amber"></span><span class="bottle"></span>
+        </div>
+        <div class="bar-counter"><span class="beer-tap"></span><span class="glass"></span><span class="glass"></span></div>
+        <div class="bar-stool stool-1"></div><div class="bar-stool stool-2"></div>
+        <div class="mini-table"><div class="mini-field">
+          <i class="mini-rod"></i><i class="mini-rod"></i><i class="mini-rod"></i><i class="mini-rod"></i>
+          <i class="mini-rod"></i><i class="mini-rod"></i><i class="mini-rod"></i><i class="mini-rod"></i>
+        </div></div>
+      </div>
       <div class="auth-card">
         <div class="auth-brand">${brand()}</div>
         <h1>${registering ? "Crie sua conta" : "Bem-vindo de volta"}</h1>
@@ -200,6 +280,7 @@ export function menuScreen(profile: PlayerProfile): string {
   catch { hero = listHeroes()[0]!; }
   return `
     <section class="screen menu-screen">
+      ${barDecor()}
       ${appHeader(profile)}
       <div class="menu-content">
         <div class="menu-headline">
@@ -231,6 +312,7 @@ export function selectScreen(profile: PlayerProfile): string {
   const heroes = listHeroes();
   return `
     <section class="screen select-screen">
+      ${barDecor()}
       ${appHeader(profile)}
       <div class="screen-heading">
         <div>
@@ -241,6 +323,9 @@ export function selectScreen(profile: PlayerProfile): string {
         <button type="button" class="btn primary" data-action="creator">+ Criar personagem</button>
       </div>
       <div class="hero-grid">${heroes.map((hero) => heroCard(hero, hero.id === profile.selectedHeroId)).join("")}</div>
+      <section class="ability-detail" data-ability-info>
+        <p class="ability-detail-empty">Passe o mouse ou clique no nome de uma habilidade para ver o que ela faz, a barra em que atua e o bônus de poder do herói.</p>
+      </section>
       <div class="screen-actions">
         <button type="button" class="btn ghost" data-action="menu">Voltar</button>
         <button type="button" class="btn primary" data-action="play">Continuar para o jogo →</button>
@@ -255,6 +340,7 @@ export function modesScreen(profile: PlayerProfile, difficulty: AiDifficulty): s
   catch { hero = listHeroes()[0]!; }
   return `
     <section class="screen modes-screen">
+      ${barDecor()}
       ${appHeader(profile)}
       <div class="screen-heading">
         <div>
@@ -301,8 +387,17 @@ export function modesScreen(profile: PlayerProfile, difficulty: AiDifficulty): s
 }
 
 export function howToScreen(): string {
+  const abilityRows = Object.values(ABILITIES).map((ability) => {
+    const rods = ability.allowedRods.map((rod) => ROD_LABELS[rod].replace(/\s*\(.+\)/, "")).join("/");
+    return `<li>
+      <b style="color:${ABILITY_COLORS[ability.id] ?? "#ffd9a0"}">${escapeHtml(ability.name)}</b>
+      <small>custo ${ability.cost} · ${rods} · ${TRIGGER_LABELS[ability.trigger]}</small>
+      <span>${escapeHtml(ability.description)}</span>
+    </li>`;
+  }).join("");
   return `
     <section class="screen howto-screen">
+      ${barDecor()}
       ${`<header class="app-header"><div class="brand"><span class="brand-icon">P</span><div><strong>PIMBOCAS</strong><small>Pebolim Heroes</small></div></div><button type="button" class="btn ghost btn-sm" data-action="menu">Voltar</button></header>`}
       <div class="screen-heading"><div><span class="eyebrow">GUIA RÁPIDO</span><h1>Como jogar</h1></div></div>
       <div class="howto-grid">
@@ -314,23 +409,36 @@ export function howToScreen(): string {
             <div><kbd>→</kbd><span>Segurar e soltar: chute para frente (força pela carga)</span></div>
             <div><kbd>←</kbd><span>Segurar e soltar: chute para trás</span></div>
             <div><kbd>1</kbd><kbd>-</kbd><kbd>4</kbd><span>Ativar habilidades (veja o nome no termômetro)</span></div>
-            <div><kbd>Esc</kbd><span>Sair da partida</span></div>
+            <div><kbd>Esc</kbd><span>Abrir o menu do jogo: continuar, reiniciar, trocar personagem ou voltar ao menu</span></div>
           </div>
-        </div>
-        <div class="howto-card">
-          <h2>Especial</h2>
-          <p>A barra de fogo enche com o tempo e com suas ações. Cada habilidade fica marcada na altura do custo.</p>
-          <p><b style="color:#ffd166">Auto-disparo:</b> se a bola estiver perto da barra da habilidade, ela <b>pega a bola e chuta sozinha</b> — não precisa segurar <kbd>→</kbd>. Se não estiver, a habilidade fica armada para o próximo chute.</p>
+          <h2>Queda da mesa</h2>
+          <p>Mesas de pebolim não são perfeitamente retas: cada lado tem uma leve inclinação para o seu gol. Quanto mais perto da lateral, mais a bola é puxada para a área — vale observar isso na defesa e nos chutes longos.</p>
+          <h2>O adversário também tem habilidades</h2>
+          <p>A IA tem herói e barra de especial próprios: <b>Fácil</b> joga com Léo Coringa, <b>Médio</b> com Rafa Artilheiro e <b>Difícil</b> com Duda Muralha. Ela carrega energia com chutes e defesas e ativa as habilidades sozinha — acompanhe a barra no canto superior esquerdo. O gol de goleiro limpo dela também vale <b>2 pontos</b>.</p>
+          <h2>Fogo e vitória</h2>
           <ul>
-            <li><b style="color:${ABILITY_COLORS.chute_diagonal}">Chute Diagonal</b> — mais força e trajetória oblíqua.</li>
-            <li><b style="color:${ABILITY_COLORS.bloqueio_pesado}">Bloqueio Pesado</b> — defesa rígida: a bola quase para nos pés.</li>
-            <li><b style="color:${ABILITY_COLORS.leitura_de_jogo}">Leitura de Jogo</b> — 2s de barra mais rápida e chute mais forte.</li>
-            <li><b style="color:${ABILITY_COLORS.cruzador_estelar}">Cruzador Estelar</b> — do meio: chute fortíssimo, giro longo e trajetória que atravessa a defesa.</li>
-            <li><b style="color:${ABILITY_COLORS.chute_fantasma}">Chute Fantasma</b> — finta na diagonal oposta e curva de volta.</li>
-            <li><b style="color:${ABILITY_COLORS.combo_breaker}">Combo Breaker</b> — 4 rechutes seguidos, com força crescente.</li>
+            <li>Sem gol por <b>60s</b>, a arena pega fogo: a bola fica mais rápida e mais quicante. A cada stack o fogo começa antes.</li>
+            <li>A partida termina quando alguém abre <b>3 pontos</b> de vantagem.</li>
+            <li>Se alguém chegar a <b>10 pontos</b> sem essa margem, o placar zera e o jogo vai para o <b>stack 2</b> (IA mais agressiva e fogo mais rápido). A partida continua.</li>
+            <li><b>Chute de Goleiro</b>: gol limpo (sem tocar em nada) vale <b>2 pontos</b>; gol tocado vale 1.</li>
           </ul>
         </div>
+        <div class="howto-card howto-wide">
+          <h2>Habilidades (${Object.keys(ABILITIES).length} no total)</h2>
+          <p><b style="color:#b4691a">Auto-disparo:</b> se a bola estiver perto da barra da habilidade, ela <b>pega a bola e chuta sozinha</b> — não precisa segurar <kbd>→</kbd>. Se não estiver, fica armada para o próximo chute.</p>
+          <p>Cada habilidade responde ao atributo correspondente: chute, controle, defesa ou goleiro. Personagens com o stat alto deixam a mesma habilidade mais forte.</p>
+          <p><b style="color:#ffe7a3">Cópia (Paulo):</b> empresta uma habilidade de outro herói por alguns segundos, aparecendo como slot extra sem custo. <b style="color:#b28cff">Roletada (Jhonas):</b> bomba fortíssima, porém descontrolada, que trava o manete por 1,4 s. <b style="color:#7cffb2">Rebote (Kenji):</b> o boneco fica no aguardo e contra-ataca forte se a bola bater nele.</p>
+          <ul class="ability-list">${abilityRows}</ul>
+        </div>
         <div class="howto-card">
+          <h2>Poder por quantidade</h2>
+          <p>Todo personagem tem de <b>2 a 4 habilidades</b>. Quem tem menos, compensa com mais poder em cada uma:</p>
+          <ul>
+            <li><b>2 habilidades:</b> +${Math.round((getAbilityPowerMult(2) - 1) * 100)}% de poder</li>
+            <li><b>3 habilidades:</b> +${Math.round((getAbilityPowerMult(3) - 1) * 100)}% de poder</li>
+            <li><b>4 habilidades:</b> poder padrão</li>
+          </ul>
+          <p>Passe o mouse ou clique no nome de uma habilidade na seleção para ver barra, gatilho, custo, recuperação e bônus.</p>
           <h2>Atributos e carga</h2>
           <p>Cada personagem tem no máximo <b>${STAT_BUDGET} pontos</b> de atributo (${STAT_MIN} a ${STAT_MAX} cada). A referência de equilíbrio é ${STAT_REFERENCE}.</p>
           <ul>
@@ -341,6 +449,8 @@ export function howToScreen(): string {
             <b>Defensivo:</b> ${ROLE_CHARGE_SUMMARY.defensivo}<br>
             <b>Coringa:</b> ${ROLE_CHARGE_SUMMARY.coringa}
           </p>
+          <h2>Imagens do herói</h2>
+          <p>No criador você pode enviar uma foto <b>só do rosto</b> (aparece na borda da mesa) e outra de <b>corpo inteiro</b> (aparece nos cartões). Sem upload, o jogo usa placeholders.</p>
         </div>
       </div>
     </section>`;
@@ -351,12 +461,13 @@ export function creatorScreen(profile: PlayerProfile, draft: HeroDraft): string 
   const statsTotal = STAT_KEYS.reduce((sum, key) => sum + draft.stats[key], 0);
   return `
     <section class="screen creator-screen">
+      ${barDecor()}
       ${appHeader(profile)}
       <div class="screen-heading">
         <div>
           <span class="eyebrow">CRIADOR DE PERSONAGEM</span>
           <h1>${editing ? "Editar personagem" : "Crie seu herói"}</h1>
-          <p>Distribua os atributos, escolha a barra e até duas habilidades.</p>
+          <p>Distribua os atributos, escolha a barra, envie as imagens e equipe de 2 a 4 habilidades.</p>
         </div>
         <button type="button" class="btn ghost" data-action="select">Voltar</button>
       </div>
@@ -376,6 +487,23 @@ export function creatorScreen(profile: PlayerProfile, draft: HeroDraft): string 
                 ${HERO_COLORS.map((color) => `<button type="button" class="swatch ${color === draft.color ? "active" : ""}" data-color="${color}" style="--swatch:${color}" aria-label="Cor ${color}"></button>`).join("")}
               </div>
             </div>
+            <div class="field-label">Imagens do personagem <small>(opcional)</small>
+              <div class="image-uploads">
+                <label class="image-upload">
+                  <input type="file" accept="image/*" data-image="face">
+                  <span class="image-upload-preview face" data-image-preview="face">
+                    ${draft.faceImage ? `<img src="${escapeHtml(draft.faceImage)}" alt="">` : "<b>+</b><small>Rosto (aparece na mesa)</small>"}
+                  </span>
+                </label>
+                <label class="image-upload">
+                  <input type="file" accept="image/*" data-image="body">
+                  <span class="image-upload-preview body" data-image-preview="body">
+                    ${draft.bodyImage ? `<img src="${escapeHtml(draft.bodyImage)}" alt="">` : "<b>+</b><small>Corpo inteiro</small>"}
+                  </span>
+                </label>
+              </div>
+              <small class="budget-hint">Use JPG/PNG até ~5 MB. A imagem é reduzida antes de salvar. Sem imagem, usamos placeholders.</small>
+            </div>
             <div class="stats-editor">
               <div class="stats-editor-head"><span>ATRIBUTOS</span><b><span data-budget>${statsTotal}</span> / ${STAT_BUDGET}</b></div>
               ${STAT_KEYS.map((key) => `
@@ -389,7 +517,8 @@ export function creatorScreen(profile: PlayerProfile, draft: HeroDraft): string 
           </div>
           <div class="creator-column creator-side">
             <div class="creator-preview" style="--hero-color:${draft.color}">
-              ${heroAvatar({ name: draft.name || "Novo Herói", color: draft.color }, "large preview-avatar")}
+              <div data-body-preview>${bodyArt({ ...draft, name: draft.name || "Novo Herói" }, "preview-body")}</div>
+              ${heroAvatar({ name: draft.name || "Novo Herói", color: draft.color, faceImage: draft.faceImage }, "large preview-avatar")}
               <h2 data-preview-name>${escapeHtml(draft.name || "Novo Herói")}</h2>
               <span class="role-badge" data-preview-role>${ROLE_LABELS[draft.role]}</span>
               <div class="stat-bars compact preview-stats">
@@ -404,20 +533,24 @@ export function creatorScreen(profile: PlayerProfile, draft: HeroDraft): string 
                   </button>`).join("")}
               </div>
             </div>
-            <div class="field-label">Habilidades <small>(até 2)</small>
+            <div class="field-label">Habilidades <small>(<span data-ability-total>${draft.abilities.length}</span>/4 · mínimo 2)</small>
               <div class="ability-options">
                 ${Object.values(ABILITIES).map((ability) => `
                   <label class="ability-option">
                     <input type="checkbox" value="${ability.id}" data-ability ${draft.abilities.includes(ability.id) ? "checked" : ""}>
-                    <span class="ability-option-body" style="--chip-color:${ABILITY_COLORS[ability.id] ?? "#ffd9a0"}">
+                    <span class="ability-option-body" style="--chip-color:${ABILITY_COLORS[ability.id] ?? "#ffd9a0"}" data-ability-info-id="${escapeHtml(ability.id)}" data-ability-count="${draft.abilities.length}">
                       <b>${escapeHtml(ability.name)}</b>
                       <small>${ability.role === draft.role ? "Recomendada · " : ""}custo ${ability.cost}</small>
                     </span>
                   </label>`).join("")}
               </div>
+              <small class="budget-hint">Quanto menos habilidades, maior o bônus: 2 habs = +25%, 3 habs = +12%, 4 habs = padrão. Passe o mouse ou clique no nome para ver os detalhes.</small>
             </div>
           </div>
         </div>
+        <section class="ability-detail" data-ability-info>
+          <p class="ability-detail-empty">Passe o mouse ou clique no nome de uma habilidade para ver o que ela faz, a barra em que atua e o bônus de poder.</p>
+        </section>
         <p class="form-error" data-error></p>
         <div class="screen-actions">
           <button type="button" class="btn ghost" data-action="select">Cancelar</button>

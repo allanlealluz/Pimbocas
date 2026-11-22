@@ -21,16 +21,43 @@
               </div>
             </div>
 
+            <div class="ai-energy" aria-label="Energia da IA">
+              <div class="ai-energy-top">
+                <span id="ai-energy-name" class="ai-energy-name">IA</span>
+                <span id="ai-energy-value" class="ai-energy-value">0%</span>
+              </div>
+              <div class="ai-energy-track">
+                <div id="ai-energy-fill" class="ai-energy-fill"></div>
+              </div>
+              <div id="ai-energy-abilities" class="ai-energy-abilities"></div>
+            </div>
+
             <div class="controls-hint">
               <span><b>Q W E R</b> barras</span>
               <span><b>↑ ↓</b> mover</span>
               <span><b>→</b> chutar frente</span>
               <span><b>←</b> chutar trás</span>
               <span><b>1-4</b> especial</span>
+              <span><b>Esc</b> menu</span>
             </div>
           </section>
         </main>
-        <button type="button" class="exit-match" data-exit-match>← Menu</button>
+        <button type="button" class="game-menu-btn" data-open-pause aria-label="Abrir menu do jogo">☰ Menu</button>
+
+        <div id="pause-menu" class="pause-menu" hidden>
+          <div class="pause-card" role="dialog" aria-modal="true" aria-label="Menu do jogo">
+            <span class="pause-eyebrow">PIMBOCAS · PARTIDA</span>
+            <h2>Jogo pausado</h2>
+            <p>Escolha o que fazer com a partida atual.</p>
+            <div class="pause-actions">
+              <button type="button" class="btn primary" data-pause-action="resume">Continuar jogo</button>
+              <button type="button" class="btn outline" data-pause-action="restart">Reiniciar partida</button>
+              <button type="button" class="btn outline" data-pause-action="select">Trocar personagem</button>
+              <button type="button" class="btn ghost" data-pause-action="menu">Voltar ao menu</button>
+            </div>
+            <small><b>Esc</b> também volta ao jogo</small>
+          </div>
+        </div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
