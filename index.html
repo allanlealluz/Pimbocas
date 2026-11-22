@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pimbocas — Pebolim Heroes</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="screen-root" class="screen-root"></div>
+
+      <div id="game-screen" class="game-screen" hidden>
+        <main class="game-layout">
+          <section class="field-panel">
+            <canvas id="game" width="960" height="540" aria-label="Campo de pebolim"></canvas>
+
+            <div class="special-overlay" aria-label="Especial">
+              <div class="thermo-wrap">
+                <div id="ability-markers" class="ability-markers" aria-label="Habilidades"></div>
+                <div id="special-bar" class="thermometer" role="img" aria-label="Termômetro de energia"></div>
+              </div>
+            </div>
+
+            <div class="controls-hint">
+              <span><b>Q W E R</b> barras</span>
+              <span><b>↑ ↓</b> mover</span>
+              <span><b>→</b> chutar frente</span>
+              <span><b>←</b> chutar trás</span>
+              <span><b>1-4</b> especial</span>
+            </div>
+          </section>
+        </main>
+        <button type="button" class="exit-match" data-exit-match>← Menu</button>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
