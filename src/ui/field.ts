@@ -13,6 +13,7 @@ export function renderField(
   selectedRodId?: string,
   previewAbilityId?: string | null,
   kickDirection?: 1 | -1 | null,
+  localSide: "left" | "right" = "left",
 ): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -52,13 +53,14 @@ export function renderField(
 
   drawPitch(ctx, w, h, match.field.goalMouth);
   if (match.heat > 0) drawArenaFire(ctx, w, h, match.heat);
-  drawAbilityFields(ctx, match);
+  drawAbilityFields(ctx, match, localSide);
   if (match.elastic) drawElasticOrbit(ctx, match.elastic, match.nowMs);
   drawEffects(ctx, match.effects);
-  drawRods(ctx, match.rods, w, h, selectedRodId, previewAbilityId, rodFx);
-  if (match.nowMs < match.lockMovementUntilMs) drawMovementLock(ctx, match);
+  drawRods(ctx, match.rods, w, h, selectedRodId, previewAbilityId, rodFx, localSide);
+  if (match.nowMs < match.lockMovementUntilMs) drawMovementLock(ctx, match, localSide);
   drawBall(ctx, match.ball, ballGlow ? ABILITY_COLORS[ballGlow] : undefined);
-  drawScore(ctx, match.score.left, match.score.right, w, match.stage);
+  if (localSide === "left") drawScore(ctx, match.score.left, match.score.right, w, match.stage);
+  else drawScore(ctx, match.score.right, match.score.left, w, match.stage);
   if (match.toast) drawToast(ctx, match.toast);
   if (kickDirection) drawKickArrow(ctx, w / 2, h - 30, kickDirection);
 
@@ -271,12 +273,12 @@ function drawPitch(ctx: CanvasRenderingContext2D, w: number, h: number, goalMout
 }
 
 /** Roletada: aviso de que o manete está travado enquanto a bola dispara. */
-function drawMovementLock(ctx: CanvasRenderingContext2D, match: MatchState): void {
+function drawMovementLock(ctx: CanvasRenderingContext2D, match: MatchState, localSide: "left" | "right"): void {
   const color = ABILITY_COLORS.roletada ?? "#b28cff";
   const remaining = Math.max(0, (match.lockMovementUntilMs - match.nowMs) / 1000).toFixed(1);
   ctx.save();
   for (const rod of match.rods) {
-    if (rod.side !== "left") continue;
+    if (rod.side !== localSide) continue;
     const x = rod.xRatio * match.field.width;
     ctx.fillStyle = "rgba(10,8,20,0.85)";
     ctx.beginPath(); ctx.arc(x, 24, 13, 0, Math.PI * 2); ctx.fill();
@@ -338,11 +340,11 @@ function drawArenaFire(ctx: CanvasRenderingContext2D, w: number, h: number, heat
 }
 
 /** Auras persistentes das habilidades defensivas ativas. */
-function drawAbilityFields(ctx: CanvasRenderingContext2D, match: MatchState): void {
+function drawAbilityFields(ctx: CanvasRenderingContext2D, match: MatchState, localSide: "left" | "right"): void {
   const t = performance.now();
 
   // Mão Grande: luva gigante pulsando ao redor do goleiro.
-  const goalie = match.rods.find((r) => r.side === "left" && r.id === "goleiro");
+  const goalie = match.rods.find((r) => r.side === localSide && r.id === "goleiro");
   if (goalie) {
     const mods = getHeroModifiers(match, "goleiro");
     if (mods.bigHand && mods.bigHandRadius > 0) {
@@ -369,7 +371,7 @@ function drawAbilityFields(ctx: CanvasRenderingContext2D, match: MatchState): vo
 
   // Zaga Magnética: campo suave em volta de cada boneco da barra válida.
   for (const rodId of ["goleiro", "defesa"] as const) {
-    const rod = match.rods.find((r) => r.side === "left" && r.id === rodId);
+    const rod = match.rods.find((r) => r.side === localSide && r.id === rodId);
     if (!rod) continue;
     const mods = getHeroModifiers(match, rodId);
     if (!mods.magnetic || mods.magnetRadius <= 0) continue;
@@ -398,7 +400,7 @@ function drawAbilityFields(ctx: CanvasRenderingContext2D, match: MatchState): vo
   if (match.reboteCounterAvailable) {
     const color = ABILITY_COLORS.rebote ?? "#7cffb2";
     for (const rodId of ["goleiro", "defesa"] as const) {
-      const rod = match.rods.find((r) => r.side === "left" && r.id === rodId);
+      const rod = match.rods.find((r) => r.side === localSide && r.id === rodId);
       if (!rod) continue;
       const mods = getHeroModifiers(match, rodId);
       if (!mods.rebote) continue;
@@ -547,16 +549,17 @@ function drawRods(
   selectedRodId?: string,
   previewAbilityId?: string | null,
   rodFx?: Map<string, RodFx>,
+  localSide: "left" | "right" = "left",
 ): void {
   const preview = previewAbilityId ? getAbility(previewAbilityId) : null;
   const pulse = 12 + Math.sin(performance.now() / 150) * 6;
 
   for (const rod of rods) {
     const x = rod.xRatio * w;
-    const selected = rod.side === "left" && rod.id === selectedRodId;
-    const isPreviewTarget = !!preview && rod.side === "left" && preview.allowedRods.includes(rod.id);
-    const dimmed = !!preview && rod.side === "left" && !isPreviewTarget;
-    const fx = rod.side === "left" ? rodFx?.get(rod.id) : undefined;
+    const selected = rod.side === localSide && rod.id === selectedRodId;
+    const isPreviewTarget = !!preview && rod.side === localSide && preview.allowedRods.includes(rod.id);
+    const dimmed = !!preview && rod.side === localSide && !isPreviewTarget;
+    const fx = rod.side === localSide ? rodFx?.get(rod.id) : undefined;
 
     if (dimmed) {
       ctx.save();

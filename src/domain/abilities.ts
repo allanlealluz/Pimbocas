@@ -260,9 +260,9 @@ export const ABILITIES: Record<string, AbilityDefinition> = {
   copia: {
     id: "copia",
     name: "Cópia",
-    hint: "CÓPIA · rouba a habilidade de outro herói por alguns segundos",
+    hint: "CÓPIA · rouba a habilidade do adversário; aperte o slot copiado para usar",
     description:
-      "Paulo observa a mesa e empresta uma habilidade de outro personagem por alguns segundos. A habilidade copiada aparece como um slot extra e não gasta energia. A escolha favorece quem está perto da bola: defesa perto do gol, chute perto do ataque.",
+      "Paulo observa a mesa e rouba uma habilidade de outro herói — de preferência do adversário — por alguns segundos. A habilidade copiada aparece como um slot extra, não gasta energia e só é disparada quando você aperta a tecla dele.",
     role: "coringa",
     cost: 30,
     cooldownMs: 12000,

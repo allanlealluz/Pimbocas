@@ -3,10 +3,11 @@ import { listHeroes } from "../domain/heroes";
 import { ROLE_CHARGE_SUMMARY } from "../domain/roles";
 import { STAT_BUDGET, STAT_MAX, STAT_MIN, STAT_REFERENCE, STAT_STEP } from "../domain/stats";
 import type { AbilityTrigger, HeroDefinition, HeroStats, RodId, Role } from "../domain/types";
+import { keyLabel, type ControlScheme } from "../game/input";
 import type { AiDifficulty } from "../game/match";
 import type { PlayerProfile } from "../net/firebase";
 
-export type ScreenName = "auth" | "menu" | "modes" | "select" | "creator" | "howto" | "game";
+export type ScreenName = "auth" | "menu" | "modes" | "online" | "select" | "creator" | "howto" | "controls" | "game";
 export type AuthMode = "login" | "register";
 
 export { STAT_BUDGET, STAT_MIN, STAT_MAX };
@@ -58,6 +59,7 @@ export const STAT_KEYS = Object.keys(STAT_LABELS) as (keyof HeroStats)[];
 export const BAR_PRESETS = [
   { id: "rapido", label: "4 segmentos", detail: "ciclos rápidos", segments: [25, 25, 25, 25] },
   { id: "tatico", label: "3 segmentos", detail: "equilíbrio", segments: [20, 30, 50] },
+  { id: "medio", label: "3 segmentos", detail: "carga equilibrada", segments: [30, 30, 40] },
   { id: "pesado", label: "2 segmentos", detail: "habilidades pesadas", segments: [50, 50] },
   { id: "curto", label: "2 segmentos", detail: "carga irregular", segments: [40, 60] },
 ] as const;
@@ -116,7 +118,7 @@ function initials(name: string): string {
 }
 
 export function heroAvatar(hero: { name: string; color?: string; faceImage?: string }, cssClass = ""): string {
-  const color = hero.color ?? (hero.name === "Rafa Artilheiro" ? HERO_COLORS[0]! : hero.name === "Duda Muralha" ? HERO_COLORS[1]! : HERO_COLORS[2]!);
+  const color = hero.color ?? HERO_COLORS[2]!;
   const face = hero.faceImage
     ? `<img class="avatar-face" src="${escapeHtml(hero.faceImage)}" alt="">`
     : "";
@@ -198,30 +200,31 @@ function heroCard(hero: HeroDefinition, selected: boolean): string {
         <button type="button" class="btn ${selected ? "selected-btn" : "primary"} btn-sm" data-select-hero="${escapeHtml(hero.id)}">
           ${selected ? "Selecionado" : "Escolher"}
         </button>
-        ${hero.custom ? `
-          <button type="button" class="btn ghost btn-sm" data-edit-hero="${escapeHtml(hero.id)}">Editar</button>
-          <button type="button" class="btn danger-text btn-sm" data-delete-hero="${escapeHtml(hero.id)}">Excluir</button>
-        ` : ""}
+        <button type="button" class="btn ghost btn-sm" data-edit-hero="${escapeHtml(hero.id)}">Editar</button>
       </div>
     </article>`;
 }
 
 function brand(): string {
-  return `<div class="brand"><span class="brand-icon">P</span><div><strong>PIMBOCAS</strong><small>Pebolim Heroes</small></div></div>`;
+  return `<div class="brand"><span class="brand-icon">P</span><div><strong>PIMBOCAS</strong><small>PEBOLIM ARENA · 1V1</small></div></div>`;
 }
 
-/** Decoração de boteco reaproveitada nos menus. */
-function barDecor(): string {
-  return `<div class="bar-decor" aria-hidden="true">
-    <span class="bottle"></span><span class="bottle amber"></span><span class="bottle"></span><span class="bottle amber"></span><span class="bottle"></span>
-    <span class="decor-glass"></span><span class="decor-glass"></span>
-  </div>`;
-}
-
-function appHeader(profile: PlayerProfile): string {
+function appHeader(profile: PlayerProfile, active = ""): string {
+  const navItems = [
+    { action: "home", label: "Início" },
+    { action: "play", label: "Jogar" },
+    { action: "select", label: "Heróis" },
+    { action: "online", label: "Online" },
+    { action: "controls", label: "Controles" },
+    { action: "howto", label: "Guia" },
+  ];
+  const nav = navItems.map((item) => `
+    <button type="button" class="nav-btn ${item.action === active ? "active" : ""}" data-action="${item.action}">${item.label}</button>
+  `).join("");
   return `
     <header class="app-header">
       ${brand()}
+      <nav class="app-nav" aria-label="Navegação principal">${nav}</nav>
       <div class="header-right">
         <span class="user-chip">${heroAvatar({ name: profile.displayName, color: HERO_COLORS[4]! }, "tiny")}<span>${escapeHtml(profile.displayName)}</span></span>
         <button type="button" class="btn ghost btn-sm" data-action="logout">Sair</button>
@@ -233,24 +236,10 @@ export function authScreen(mode: AuthMode): string {
   const registering = mode === "register";
   return `
     <section class="screen auth-screen">
-      <div class="bar-scene" aria-hidden="true">
-        <div class="awning"></div>
-        <div class="pendant pendant-1"></div><div class="pendant pendant-2"></div>
-        <div class="bottle-row">
-          <span class="bottle"></span><span class="bottle amber"></span><span class="bottle"></span>
-          <span class="bottle amber"></span><span class="bottle"></span><span class="bottle amber"></span><span class="bottle"></span>
-        </div>
-        <div class="bar-counter"><span class="beer-tap"></span><span class="glass"></span><span class="glass"></span></div>
-        <div class="bar-stool stool-1"></div><div class="bar-stool stool-2"></div>
-        <div class="mini-table"><div class="mini-field">
-          <i class="mini-rod"></i><i class="mini-rod"></i><i class="mini-rod"></i><i class="mini-rod"></i>
-          <i class="mini-rod"></i><i class="mini-rod"></i><i class="mini-rod"></i><i class="mini-rod"></i>
-        </div></div>
-      </div>
       <div class="auth-card">
         <div class="auth-brand">${brand()}</div>
         <h1>${registering ? "Crie sua conta" : "Bem-vindo de volta"}</h1>
-        <p class="auth-subtitle">${registering ? "Escolha seu personagem e entre na mesa." : "Entre para jogar, criar heróis e salvar seu progresso."}</p>
+        <p class="auth-subtitle">${registering ? "Escolha seu herói e entre na arena." : "Entre na arena, solte as habilidades e dispute o topo do placar."}</p>
         <div class="auth-tabs">
           <button type="button" data-auth-tab="login" class="${registering ? "" : "active"}">Entrar</button>
           <button type="button" data-auth-tab="register" class="${registering ? "active" : ""}">Criar conta</button>
@@ -280,13 +269,12 @@ export function menuScreen(profile: PlayerProfile): string {
   catch { hero = listHeroes()[0]!; }
   return `
     <section class="screen menu-screen">
-      ${barDecor()}
-      ${appHeader(profile)}
+      ${appHeader(profile, "home")}
       <div class="menu-content">
         <div class="menu-headline">
           <span class="eyebrow">Mesa 01 · PE BOLIM LIGA</span>
-          <h1>Seu herói.<br><em>Sua mesa.</em></h1>
-          <p>Monte seu estilo, escolha suas habilidades e entre no jogo. Por enquanto, o adversário é a IA.</p>
+          <h1>SUA MESA.<br><em>SEU HERÓI.</em></h1>
+          <p>Escolha seu lutador, configure os controles e entre na arena. Modo online 1v1 com sala própria já disponível.</p>
           <button type="button" class="btn primary btn-hero" data-action="play">Jogar <span>→</span></button>
         </div>
         <div class="menu-side">
@@ -299,12 +287,12 @@ export function menuScreen(profile: PlayerProfile): string {
             <button type="button" class="btn ghost btn-sm" data-action="select">Trocar personagem</button>
           </div>
           <div class="menu-links">
-            <button type="button" data-action="creator"><b>+</b> Criar personagem</button>
+            <button type="button" data-action="controls"><b>⌨</b> Controles</button>
             <button type="button" data-action="howto"><b>?</b> Como jogar</button>
           </div>
         </div>
       </div>
-      <footer class="menu-footer">${profile.customHeroes.length} personagem(ns) criado(s) · MMR ${profile.mmr}</footer>
+      <footer class="menu-footer">Elenco oficial · ${listHeroes().length} heróis · MMR ${profile.mmr}</footer>
     </section>`;
 }
 
@@ -312,15 +300,14 @@ export function selectScreen(profile: PlayerProfile): string {
   const heroes = listHeroes();
   return `
     <section class="screen select-screen">
-      ${barDecor()}
-      ${appHeader(profile)}
+      ${appHeader(profile, "select")}
       <div class="screen-heading">
         <div>
           <span class="eyebrow">SELEÇÃO DE PERSONAGENS</span>
           <h1>Escolha seu herói</h1>
           <p>Cada personagem tem atributos, funções e uma barra de especial diferente.</p>
         </div>
-        <button type="button" class="btn primary" data-action="creator">+ Criar personagem</button>
+        <span class="eyebrow">5 heróis · edite qualquer um</span>
       </div>
       <div class="hero-grid">${heroes.map((hero) => heroCard(hero, hero.id === profile.selectedHeroId)).join("")}</div>
       <section class="ability-detail" data-ability-info>
@@ -340,8 +327,7 @@ export function modesScreen(profile: PlayerProfile, difficulty: AiDifficulty): s
   catch { hero = listHeroes()[0]!; }
   return `
     <section class="screen modes-screen">
-      ${barDecor()}
-      ${appHeader(profile)}
+      ${appHeader(profile, "play")}
       <div class="screen-heading">
         <div>
           <span class="eyebrow">MODO DE JOGO</span>
@@ -358,11 +344,12 @@ export function modesScreen(profile: PlayerProfile, difficulty: AiDifficulty): s
           <p>Partida solo no pebolim. Treine chutes, defesas e habilidades.</p>
           <div class="mode-selected">${heroAvatar(hero)}<span>${escapeHtml(hero.name)}</span><small>${ROLE_LABELS[hero.role]}</small></div>
         </article>
-        <article class="mode-card locked">
+        <article class="mode-card available">
           <div class="mode-icon">🌐</div>
-          <span class="mode-tag">EM BREVE</span>
+          <span class="mode-tag">DISPONÍVEL</span>
           <h2>Online 1v1</h2>
-          <p>Pareamento com outros jogadores. Depende do transporte em tempo real.</p>
+          <p>Pareamento por MMR e partida em tempo real com outro jogador.</p>
+          <button type="button" class="btn outline" data-action="online">Abrir sala →</button>
         </article>
         <article class="mode-card locked">
           <div class="mode-icon">🏆</div>
@@ -386,7 +373,123 @@ export function modesScreen(profile: PlayerProfile, difficulty: AiDifficulty): s
     </section>`;
 }
 
-export function howToScreen(): string {
+export function onlineScreen(profile: PlayerProfile, status: string, createdCode?: string | null, inputValue = ""): string {
+  return `
+    <section class="screen modes-screen">
+      ${appHeader(profile, "online")}
+      <div class="screen-heading">
+        <div>
+          <span class="eyebrow">MODO ONLINE · 1V1</span>
+          <h1>Sala de pebolim</h1>
+          <p>Crie uma sala e envie o código, ou entre na sala do seu amigo.</p>
+        </div>
+        <button type="button" class="btn ghost" data-action="menu">Voltar</button>
+      </div>
+      <div class="room-grid">
+        <article class="mode-card available">
+          <div class="mode-icon">🚪</div>
+          <span class="mode-tag">CRIAR</span>
+          <h2>Hospedar sala</h2>
+          ${createdCode
+            ? `<p class="room-code">${escapeHtml(createdCode)}</p><p>Envie este código para o seu amigo.</p>`
+            : `<p>Você será o host da partida.</p><button type="button" class="btn primary" data-action="create-room">Criar sala</button>`}
+        </article>
+        <article class="mode-card ${createdCode ? "locked" : "available"}">
+          <div class="mode-icon">🔑</div>
+          <span class="mode-tag">ENTRAR</span>
+          <h2>Usar código</h2>
+          <p>Digite o código recebido, por exemplo PIMBO-K7X9QA.</p>
+          <input class="room-input" data-room-code value="${escapeHtml(inputValue)}" placeholder="PIMBO-XXXXXX" maxlength="14" ${createdCode ? "disabled" : ""}>
+          <button type="button" class="btn outline" data-action="join-room" ${createdCode ? "disabled" : ""}>Entrar na sala</button>
+        </article>
+      </div>
+      <div class="online-status" data-online-status>
+        <div class="mode-icon">🌐</div>
+        <p>${escapeHtml(status || "Escolha criar ou entrar em uma sala.")}</p>
+      </div>
+      <div class="screen-actions">
+        <button type="button" class="btn ghost" data-action="cancel-online">Cancelar e voltar</button>
+      </div>
+      <p class="form-error" data-error></p>
+    </section>`;
+}
+
+export function controlsScreen(profile: PlayerProfile, scheme: ControlScheme, waitingFor: string | null): string {
+  const groups = [
+    {
+      title: "Selecionar barra",
+      items: [
+        { id: "goleiro", label: "Goleiro" },
+        { id: "defesa", label: "Defesa" },
+        { id: "meio", label: "Meio" },
+        { id: "ataque", label: "Ataque" },
+      ],
+    },
+    {
+      title: "Mover e chutar",
+      items: [
+        { id: "moveUp", label: "Mover para cima" },
+        { id: "moveDown", label: "Mover para baixo" },
+        { id: "kickForward", label: "Chutar para frente (segurar/soltar)" },
+        { id: "kickBackward", label: "Chutar para trás (segurar/soltar)" },
+      ],
+    },
+    {
+      title: "Habilidades",
+      items: [1, 2, 3, 4].map((slot) => ({ id: `ability${slot}`, label: `Habilidade ${slot}` })),
+    },
+  ];
+
+  const rows = groups.map((group) => `
+    <h2>${group.title}</h2>
+    <div class="key-list">
+      ${group.items.map((item) => {
+        const current = getBindingSafe(scheme, item.id);
+        return `<div>
+          <button type="button" class="key-bind ${waitingFor === item.id ? "listening" : ""}" data-rebind="${item.id}">
+            ${waitingFor === item.id ? "Pressione uma tecla…" : keyLabel(current)}
+          </button>
+          <span>${item.label}</span>
+        </div>`;
+      }).join("")}
+    </div>`).join("");
+
+  return `
+    <section class="screen howto-screen">
+      ${appHeader(profile, "controls")}
+      <div class="screen-heading">
+        <div>
+          <span class="eyebrow">CONFIGURAÇÕES</span>
+          <h1>Controles</h1>
+          <p>Clique numa tecla e depois pressione a nova. A configuração fica salva neste navegador.</p>
+        </div>
+        <button type="button" class="btn ghost" data-action="menu">Voltar</button>
+      </div>
+      <div class="howto-grid">
+        <div class="howto-card">${rows}
+          <p class="form-error" data-error></p>
+        </div>
+      </div>
+      <div class="screen-actions">
+        <button type="button" class="btn outline" data-action="reset-controls">Restaurar padrão</button>
+        <button type="button" class="btn primary" data-action="controls-back">Concluir</button>
+      </div>
+    </section>`;
+}
+
+function getBindingSafe(scheme: ControlScheme, id: string): string {
+  if (id.startsWith("ability")) {
+    const index = Number(id.slice(7)) - 1;
+    return scheme.abilitySlots[index] ?? "";
+  }
+  if (id === "moveUp") return scheme.moveUp;
+  if (id === "moveDown") return scheme.moveDown;
+  if (id === "kickForward") return scheme.kickForward;
+  if (id === "kickBackward") return scheme.kickBackward;
+  return scheme.rods.find((binding) => binding.rod === id)?.key ?? "";
+}
+
+export function howToScreen(scheme: ControlScheme, profile?: PlayerProfile | null): string {
   const abilityRows = Object.values(ABILITIES).map((ability) => {
     const rods = ability.allowedRods.map((rod) => ROD_LABELS[rod].replace(/\s*\(.+\)/, "")).join("/");
     return `<li>
@@ -397,24 +500,23 @@ export function howToScreen(): string {
   }).join("");
   return `
     <section class="screen howto-screen">
-      ${barDecor()}
-      ${`<header class="app-header"><div class="brand"><span class="brand-icon">P</span><div><strong>PIMBOCAS</strong><small>Pebolim Heroes</small></div></div><button type="button" class="btn ghost btn-sm" data-action="menu">Voltar</button></header>`}
+      ${profile ? appHeader(profile, "howto") : `<header class="app-header">${brand()}<button type="button" class="btn ghost btn-sm" data-action="home">Voltar</button></header>`}
       <div class="screen-heading"><div><span class="eyebrow">GUIA RÁPIDO</span><h1>Como jogar</h1></div></div>
       <div class="howto-grid">
         <div class="howto-card">
           <h2>Controles</h2>
           <div class="key-list">
-            <div><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd><span>Selecionar goleiro, defesa, meio e ataque</span></div>
-            <div><kbd>↑</kbd><kbd>↓</kbd><span>Mover a barra selecionada</span></div>
-            <div><kbd>→</kbd><span>Segurar e soltar: chute para frente (força pela carga)</span></div>
-            <div><kbd>←</kbd><span>Segurar e soltar: chute para trás</span></div>
-            <div><kbd>1</kbd><kbd>-</kbd><kbd>4</kbd><span>Ativar habilidades (veja o nome no termômetro)</span></div>
+            <div>${scheme.rods.map((b) => `<kbd>${escapeHtml(keyLabel(b.key))}</kbd>`).join("")}<span>Selecionar goleiro, defesa, meio e ataque</span></div>
+            <div><kbd>${escapeHtml(keyLabel(scheme.moveUp))}</kbd><kbd>${escapeHtml(keyLabel(scheme.moveDown))}</kbd><span>Mover a barra selecionada</span></div>
+            <div><kbd>${escapeHtml(keyLabel(scheme.kickForward))}</kbd><span>Segurar e soltar: chute para frente (força pela carga)</span></div>
+            <div><kbd>${escapeHtml(keyLabel(scheme.kickBackward))}</kbd><span>Segurar e soltar: chute para trás</span></div>
+            <div>${scheme.abilitySlots.map((code) => `<kbd>${escapeHtml(keyLabel(code))}</kbd>`).join("")}<span>Ativar habilidades (veja o nome no termômetro)</span></div>
             <div><kbd>Esc</kbd><span>Abrir o menu do jogo: continuar, reiniciar, trocar personagem ou voltar ao menu</span></div>
           </div>
           <h2>Queda da mesa</h2>
           <p>Mesas de pebolim não são perfeitamente retas: cada lado tem uma leve inclinação para o seu gol. Quanto mais perto da lateral, mais a bola é puxada para a área — vale observar isso na defesa e nos chutes longos.</p>
           <h2>O adversário também tem habilidades</h2>
-          <p>A IA tem herói e barra de especial próprios: <b>Fácil</b> joga com Léo Coringa, <b>Médio</b> com Rafa Artilheiro e <b>Difícil</b> com Duda Muralha. Ela carrega energia com chutes e defesas e ativa as habilidades sozinha — acompanhe a barra no canto superior esquerdo. O gol de goleiro limpo dela também vale <b>2 pontos</b>.</p>
+          <p>A IA tem herói e barra de especial próprios: <b>Fácil</b> joga com Kenji, <b>Médio</b> com Jhonas e <b>Difícil</b> com Gulias. Ela carrega energia com chutes e defesas e ativa as habilidades sozinha — acompanhe a barra no canto superior esquerdo. O gol de goleiro limpo dela também vale <b>2 pontos</b>.</p>
           <h2>Fogo e vitória</h2>
           <ul>
             <li>Sem gol por <b>60s</b>, a arena pega fogo: a bola fica mais rápida e mais quicante. A cada stack o fogo começa antes.</li>
@@ -425,7 +527,7 @@ export function howToScreen(): string {
         </div>
         <div class="howto-card howto-wide">
           <h2>Habilidades (${Object.keys(ABILITIES).length} no total)</h2>
-          <p><b style="color:#b4691a">Auto-disparo:</b> se a bola estiver perto da barra da habilidade, ela <b>pega a bola e chuta sozinha</b> — não precisa segurar <kbd>→</kbd>. Se não estiver, fica armada para o próximo chute.</p>
+          <p><b style="color:#b4691a">Auto-disparo:</b> se a bola estiver perto da barra da habilidade, ela <b>pega a bola e chuta sozinha</b> — não precisa segurar <kbd>${escapeHtml(keyLabel(scheme.kickForward))}</kbd>. Se não estiver, fica armada para o próximo chute.</p>
           <p>Cada habilidade responde ao atributo correspondente: chute, controle, defesa ou goleiro. Personagens com o stat alto deixam a mesma habilidade mais forte.</p>
           <p><b style="color:#ffe7a3">Cópia (Paulo):</b> empresta uma habilidade de outro herói por alguns segundos, aparecendo como slot extra sem custo. <b style="color:#b28cff">Roletada (Jhonas):</b> bomba fortíssima, porém descontrolada, que trava o manete por 1,4 s. <b style="color:#7cffb2">Rebote (Kenji):</b> o boneco fica no aguardo e contra-ataca forte se a bola bater nele.</p>
           <ul class="ability-list">${abilityRows}</ul>
@@ -461,8 +563,7 @@ export function creatorScreen(profile: PlayerProfile, draft: HeroDraft): string 
   const statsTotal = STAT_KEYS.reduce((sum, key) => sum + draft.stats[key], 0);
   return `
     <section class="screen creator-screen">
-      ${barDecor()}
-      ${appHeader(profile)}
+      ${appHeader(profile, "select")}
       <div class="screen-heading">
         <div>
           <span class="eyebrow">CRIADOR DE PERSONAGEM</span>

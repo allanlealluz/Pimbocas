@@ -1,9 +1,12 @@
+import type { RodId } from "../domain/types";
+import type { MatchSnapshot } from "./snapshot";
+
 /**
  * Interface de transporte para gameplay realtime.
  * A ideia é permitir trocar a implementação sem reescrever a lógica da partida.
  *
- * MVP sugerido: PeerTransport (WebRTC/PeerJS), host autoritativo.
- * Evolução: WebSocketTransport com servidor autoritativo.
+ * Implementação atual: PeerTransport (WebRTC/PeerJS), host autoritativo.
+ * Evolução: WebSocketTransport com servidor autoritativo (Durable Object).
  */
 
 export type TransportEventMap = {
@@ -19,7 +22,8 @@ export type TransportHandler<T extends TransportEventType> = (event: TransportEv
 
 export interface RealtimeTransport {
   readonly kind: "peerjs" | "websocket";
-  connect(): Promise<void>;
+  /** Abre o transporte local. Com `remoteId`, inicia a conexão com o par. */
+  connect(remoteId?: string): Promise<void>;
   disconnect(): Promise<void>;
   send<T>(payload: T): void;
   on<T extends TransportEventType>(type: T, handler: TransportHandler<T>): () => void;
@@ -27,8 +31,11 @@ export interface RealtimeTransport {
 
 /** Mensagens de jogo devem ser pequenas, explícitas e versionáveis. */
 export type GameMessage =
-  | { type: "input"; tick: number; rod: string; axis: number; rotation: number }
-  | { type: "ability_activate"; tick: number; abilityId: string }
-  | { type: "state_snapshot"; tick: number; state: unknown }
+  | { type: "hello"; heroId: string; displayName: string }
+  /** `seq` permite descartar mensagens atrasadas e detectar input parado. */
+  | { type: "input"; rod: RodId; axis: -1 | 0 | 1; seq: number }
+  | { type: "kick"; rod: RodId; power: number; direction: 1 | -1 }
+  | { type: "ability_activate"; abilityId: string }
+  | { type: "snapshot"; snapshot: MatchSnapshot }
   | { type: "ping"; t: number }
   | { type: "pong"; t: number };

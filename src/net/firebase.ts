@@ -28,6 +28,8 @@ import {
   deleteDoc,
   type Firestore,
 } from "firebase/firestore";
+import { HEROES } from "../domain/heroes";
+import { normalizeHeroStats } from "../domain/stats";
 import type { HeroDefinition } from "../domain/types";
 
 export interface PlayerProfile {
@@ -51,14 +53,32 @@ export interface FirebaseService {
   getProfile(uid: string): Promise<PlayerProfile | null>;
   saveProfile(profile: PlayerProfile): Promise<void>;
   saveSelectedHero(uid: string, heroId: string): Promise<void>;
+  /** Elenco global: o mesmo para todos os jogadores, salvo na coleção `heroes`. */
+  listHeroes(): Promise<HeroDefinition[]>;
+  saveHero(hero: HeroDefinition): Promise<void>;
 }
 
 export interface MatchmakingTicket {
   uid: string;
   mmr: number;
   heroId: string;
+  /** Id usado no PeerJS para receber a conexão do host. */
+  peerId?: string;
+  displayName?: string;
   status: "queued" | "matched" | "cancelled";
   matchId?: string;
+}
+
+export interface MatchRecord {
+  status: string;
+  mode: string;
+  players: Array<{
+    uid: string;
+    mmr: number;
+    heroId?: string;
+    peerId?: string;
+    displayName?: string;
+  }>;
 }
 
 const firebaseConfig = {
@@ -98,12 +118,49 @@ export function getDb(): Firestore {
   return db;
 }
 
+/** Firestore rejeita `undefined`: normaliza campos opcionais antes de gravar. */
+function toHeroDocument(hero: HeroDefinition): Record<string, unknown> {
+  return {
+    id: hero.id,
+    name: hero.name,
+    role: hero.role,
+    description: hero.description,
+    stats: normalizeHeroStats(hero.stats),
+    specialBar: { segments: [...hero.specialBar.segments] },
+    abilities: [...hero.abilities],
+    color: hero.color ?? "",
+    faceImage: hero.faceImage ?? "",
+    bodyImage: hero.bodyImage ?? "",
+    custom: false,
+  };
+}
+
+function fromHeroDocument(id: string, data: Record<string, unknown>): HeroDefinition {
+  const hero = data as unknown as HeroDefinition;
+  return {
+    ...hero,
+    id,
+    stats: normalizeHeroStats(hero.stats ?? HEROES[id]?.stats ?? {
+      kickPower: 40, ballControl: 40, rodSpeed: 40, defense: 40, goalkeeping: 40,
+    }),
+    color: hero.color || HEROES[id]?.color,
+    faceImage: hero.faceImage || undefined,
+    bodyImage: hero.bodyImage || undefined,
+    custom: false,
+  };
+}
+
+function seedHeroes(): HeroDefinition[] {
+  return Object.values(HEROES).map((hero) => ({ ...hero, custom: false }));
+}
+
 function defaultProfile(uid: string, displayName: string): PlayerProfile {
+  const heroIds = Object.keys(HEROES);
   return {
     uid,
     displayName,
-    unlockedHeroes: ["artilheiro", "muralha", "coringa"],
-    selectedHeroId: "coringa",
+    unlockedHeroes: heroIds,
+    selectedHeroId: HEROES.paulo ? "paulo" : heroIds[0] ?? "paulo",
     mmr: 1000,
     customHeroes: [],
   };
@@ -129,7 +186,7 @@ async function ensureUserProfile(user: User, displayName?: string): Promise<Play
     uid: user.uid,
     displayName: data.displayName || fallbackName,
     unlockedHeroes: data.unlockedHeroes ?? defaultProfile(user.uid, fallbackName).unlockedHeroes,
-    selectedHeroId: data.selectedHeroId ?? "coringa",
+    selectedHeroId: data.selectedHeroId ?? "paulo",
     mmr: typeof data.mmr === "number" ? data.mmr : 1000,
     customHeroes: Array.isArray(data.customHeroes) ? data.customHeroes : [],
   };
@@ -209,8 +266,8 @@ export class FirebaseWebService implements FirebaseService {
     return {
       uid,
       displayName: data.displayName || `Jogador-${uid.slice(0, 5)}`,
-      unlockedHeroes: data.unlockedHeroes ?? ["artilheiro", "muralha", "coringa"],
-      selectedHeroId: data.selectedHeroId ?? "coringa",
+      unlockedHeroes: data.unlockedHeroes ?? Object.keys(HEROES),
+      selectedHeroId: data.selectedHeroId ?? "paulo",
       mmr: typeof data.mmr === "number" ? data.mmr : 1000,
       customHeroes: Array.isArray(data.customHeroes) ? data.customHeroes : [],
     };
@@ -240,6 +297,30 @@ export class FirebaseWebService implements FirebaseService {
     await setDoc(
       doc(getDb(), "loadouts", uid),
       { heroId, updatedAt: serverTimestamp() },
+      { merge: true },
+    );
+  }
+
+  async listHeroes(): Promise<HeroDefinition[]> {
+    const snap = await getDocs(collection(getDb(), "heroes"));
+    if (snap.empty) {
+      // Seed inicial: grava o elenco oficial na coleção global uma única vez.
+      await Promise.all(seedHeroes().map((hero) =>
+        setDoc(doc(getDb(), "heroes", hero.id), {
+          ...toHeroDocument(hero), createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+        }),
+      ));
+      return seedHeroes();
+    }
+    return snap.docs
+      .map((docSnap) => fromHeroDocument(docSnap.id, docSnap.data() as Record<string, unknown>))
+      .sort((a, b) => Object.keys(HEROES).indexOf(a.id) - Object.keys(HEROES).indexOf(b.id));
+  }
+
+  async saveHero(hero: HeroDefinition): Promise<void> {
+    await setDoc(
+      doc(getDb(), "heroes", hero.id),
+      { ...toHeroDocument(hero), updatedAt: serverTimestamp() },
       { merge: true },
     );
   }
@@ -287,13 +368,27 @@ export async function tryFindMatch(uid: string, mmr: number, mmrWindow = 200): P
       throw new Error("Oponente já não está disponível.");
     }
 
+    const myTicket = mySnap.data() as MatchmakingTicket;
+    const opTicket = opSnap.data() as MatchmakingTicket;
     tx.set(matchRef, {
       status: "waiting",
       mode: "1v1",
       createdAt: serverTimestamp(),
       players: [
-        { uid, mmr },
-        { uid: opponent.uid, mmr: opponent.mmr },
+        {
+          uid,
+          mmr,
+          heroId: myTicket.heroId,
+          peerId: myTicket.peerId ?? null,
+          displayName: myTicket.displayName ?? null,
+        },
+        {
+          uid: opponent.uid,
+          mmr: opponent.mmr,
+          heroId: opTicket.heroId,
+          peerId: opTicket.peerId ?? null,
+          displayName: opTicket.displayName ?? null,
+        },
       ],
     });
     tx.update(myRef, { status: "matched", matchId, updatedAt: serverTimestamp() });
@@ -303,7 +398,31 @@ export async function tryFindMatch(uid: string, mmr: number, mmrWindow = 200): P
   return matchId;
 }
 
+/** Lê o documento da partida criada pelo matchmaking para descobrir o par. */
+export async function getMatch(matchId: string): Promise<MatchRecord | null> {
+  const snap = await getDoc(doc(getDb(), "matches", matchId));
+  return snap.exists() ? (snap.data() as MatchRecord) : null;
+}
+
 const LOCAL_KEY = "pimbocas.localProfile.v1";
+const HEROES_KEY = "pimbocas.heroes.v1";
+
+function readLocalHeroes(): HeroDefinition[] {
+  try {
+    const raw = localStorage.getItem(HEROES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as HeroDefinition[];
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map((hero) => fromHeroDocument(hero.id, hero as unknown as Record<string, unknown>));
+      }
+    }
+  } catch {
+    // localStorage indisponível: usa o seed.
+  }
+  const seeded = seedHeroes();
+  try { localStorage.setItem(HEROES_KEY, JSON.stringify(seeded)); } catch { /* noop */ }
+  return seeded;
+}
 
 function readLocalProfile(): PlayerProfile {
   try {
@@ -347,6 +466,14 @@ export class FirebaseServiceStub implements FirebaseService {
     const profile = readLocalProfile();
     profile.selectedHeroId = heroId;
     this.saveProfile(profile);
+  }
+  async listHeroes(): Promise<HeroDefinition[]> { return readLocalHeroes(); }
+  async saveHero(hero: HeroDefinition): Promise<void> {
+    const heroes = readLocalHeroes();
+    const next = heroes.some((h) => h.id === hero.id)
+      ? heroes.map((h) => h.id === hero.id ? hero : h)
+      : [...heroes, hero];
+    try { localStorage.setItem(HEROES_KEY, JSON.stringify(next)); } catch { /* noop */ }
   }
 }
 

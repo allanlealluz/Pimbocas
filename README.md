@@ -49,11 +49,11 @@ src/
 2. **Menu**: mostra o personagem atual, acesso a modos, seleção, criador e guia.
 3. **Modo de jogo**: por enquanto só **Contra a IA** está disponível; Online 1v1 e Torneio aparecem como "em breve". A dificuldade da IA altera velocidade de perseguição, chance de chute, herói e freqüência com que ela usa habilidades: **Fácil** → Léo Coringa, **Médio** → Rafa Artilheiro, **Difícil** → Duda Muralha.
 4. **Seleção de personagens**: cartões com atributos, role, habilidades e formato da barra; personagens criados podem ser editados ou excluídos.
-5. **Criador de personagem**: nome, cor, role, atributos com orçamento de **200 pontos** (mín. 10 / máx. 100 cada, passos de 5), formato da barra, **de 2 a 4 habilidades** e uploads opcionais de **rosto** (aparece na borda da mesa) e **corpo inteiro** (aparece nos cartões). Imagens são reduzidas no navegador para data URL antes de salvar. O herói é salvo em `users/{uid}.customHeroes` e fica disponível na partida. Heróis salvos com o orçamento antigo são rebalanceados automaticamente ao entrar.
+5. **Editor de heróis**: qualquer um dos cinco heróis oficiais pode ser editado (nome, cor, role, atributos com orçamento de **200 pontos**, formato da barra, **de 2 a 4 habilidades** e uploads opcionais de rosto/corpo). Imagens são reduzidas no navegador para data URL antes de salvar. As edições vão para a coleção global `heroes` no Firestore e valem para todos os jogadores; sem Firebase, ficam no `localStorage`.
 6. **Visual**: login e menus usam um tema claro de boteco (azulejos, balcão de madeira, garrafas verdes/amarelas, luminárias e uma mesa de pebolim em CSS). Na seleção, passe o mouse ou clique no nome de uma habilidade para ver descrição, barra, gatilho, custo, recuperação e bônus de poder.
 7. **Partida**: o campo ocupa a tela. O botão "☰ Menu" (ou `Esc`) abre o menu da partida, com **Continuar**, **Reiniciar partida**, **Trocar personagem** e **Voltar ao menu**. A simulação fica pausada enquanto o menu está aberto.
 
-A seleção e os heróis criados são persistidos no perfil do Firebase (ou no modo local, quando sem conta).
+O elenco é persistido na coleção global `heroes` do Firestore (ou no modo local, quando sem conta). O herói selecionado fica no perfil do jogador.
 
 ## Mecânica da barra de especial
 
@@ -109,23 +109,25 @@ Todos os heróis base somam exatamente 200 pontos.
 
 ## Heróis e habilidades
 
+O elenco oficial tem exatamente cinco heróis (todos com 200 pontos):
+
 | Herói | Role | Barra | Habilidades | Bônus |
 |---|---|---|---|---|
-| Rafa Artilheiro | Ofensivo | 25 / 25 / 25 / 25 | Chute Diagonal, Chute Relâmpago, Força Bruta | +12% |
-| Duda Muralha | Defensivo | 50 / 50 | Bloqueio Pesado, Mão Grande, Zaga Magnética, Chute de Goleiro | padrão |
-| Léo Coringa | Coringa | 20 / 30 / 50 | Leitura de Jogo, Chute Diagonal | +25% |
 | **Allan** | Ofensivo | 20 / 30 / 50 | Cruzador Estelar, Chute Fantasma, Combo Breaker, Elástico | padrão |
 | **Paulo** | Coringa | 30 / 30 / 40 | Chute Relâmpago, **Cópia** | +25% |
-| **Jhonas a Sombra** | Defensivo | 50 / 50 | Chute de Goleiro, **Roletada** | +25% |
-| **Kenji** | Defensivo | 30 / 30 / 40 | Bloqueio Pesado, **Rebote** | +25% |
+| **Jhonas a Sombra** | Ofensivo | 50 / 50 | Chute de Goleiro, **Roletada** | +25% |
+| **Kenji** | Coringa | 20 / 30 / 50 | Leitura de Jogo, Chute Diagonal, Bloqueio Pesado, Rebote | padrão |
+| **Gulias** | Defensivo | 50 / 50 | **Força Bruta**, **Chute de Goleiro**, **Mão Grande** | +12% |
 
-**Allan** é o canhoneiro da mesa: `kickPower 100`, `ballControl 40`, `rodSpeed 35`, `defense 15`, `goalkeeping 10` (total 200), cor `#ff6bd6`. Ele troca quase tudo pelo chute mais forte do jogo.
+**Allan** é o canhoneiro da mesa: `100 / 40 / 35 / 15 / 10` (total 200), cor `#ff6bd6`. Ele troca quase tudo pelo chute mais forte do jogo.
 
-**Paulo** é o coringa versátil: `60 / 55 / 45 / 20 / 20` (total 200). A **Cópia** empresta uma habilidade de outro personagem por 9 s e a coloca como slot extra, sem custo de energia. A escolha prefere habilidades defensivas quando a bola está perto do próprio gol e ofensivas quando ela está no ataque.
+**Paulo** é o ladrão de jogadas: `60 / 55 / 45 / 20 / 20` (total 200). A **Cópia** rouba uma habilidade de outro herói na mesa — priorizando o adversário — por 9 s. O slot copiado aparece no HUD, não gasta energia e **só dispara quando você aperta a tecla dele**.
 
-**Jhonas a Sombra** tem chute e goleiro altos: `kickPower 80`, `ballControl 15`, `rodSpeed 20`, `defense 30`, `goalkeeping 55` (total 200). A **Roletada** é uma bomba sem controle: sai muito mais rápido, com giro e direção imprevisíveis, e trava o manete por 1,4 s.
+**Jhonas a Sombra** é atacante: `80 / 25 / 30 / 20 / 45` (total 200). A **Roletada** é uma bomba sem controle: sai muito mais rápido, com giro e direção imprevisíveis, e trava o manete por 1,4 s.
 
-**Kenji** é o defensor de alma atacante: `55 / 25 / 30 / 60 / 30` (total 200). Com o **Rebote**, os bonecos de goleiro/defesa ficam brilhando por 3,2 s; se a bola bater nele nessa janela, ele devolve um chute forte na hora (uma vez por ativação).
+**Kenji** é coringa tático: `45 / 40 / 40 / 45 / 30` (total 200). Usa Leitura de Jogo, Chute Diagonal, Bloqueio Pesado e o **Rebote**, que devolve um chute forte quando a bola bate na defesa.
+
+**Gulias** é o muro: `45 / 55 / 10 / 80 / 10` (total 200). Defesa muito alta, força e controle acima da média, mas lentidão extrema. Usa **Força Bruta**, **Chute de Goleiro** e **Mão Grande**.
 
 ### As 15 habilidades
 
@@ -179,7 +181,11 @@ O adversário tem herói, barra de especial, carga por chutes/defesas e **usa as
 | Habilidade 1-4 | `1`, `2`, `3`, `4` | Ativa o slot de habilidade do herói |
 | Abrir menu do jogo | `Esc` ou botão "☰ Menu" | Pausa, reinicia, troca de personagem ou volta ao menu |
 
-> A base atual implementa essa lógica no cliente (`src/game/input.ts`) como protótipo; falta conectar ao gameplay real de física/rede.
+### Remapeando as teclas
+
+No menu principal, clique em **⌨ Controles**. Clique no botão da tecla que quer trocar e pressione a nova; `Esc` cancela a troca. Teclas já usadas ou reservadas pelo navegador são recusadas com uma mensagem. O esquema fica salvo no `localStorage` (`pimbocas.controls.v1`), então continua valendo depois de fechar a página. O botão **Restaurar padrão** volta às teclas da tabela acima.
+
+Os hints dentro do jogo e a tela **Como jogar** mostram as teclas configuradas, e as novas teclas passam a valer imediatamente — inclusive no online.
 
 ## Firebase (sem Cloud Functions)
 
@@ -201,6 +207,33 @@ Arquivos relevantes:
 - `src/net/firebase.ts` — cliente Firebase, perfil, loadout e matchmaking simples por transação.
 
 > Sem Cloud Functions, o pareamento no cliente é apenas MVP. Para produção, valide matchmaking/MMR/recompensas em backend confiável.
+
+## Online 1v1 (sala por código)
+
+O modo online não usa Cloud Functions nem depende do Firebase:
+
+1. No menu, entre em **Jogar → Online 1v1**.
+2. Clique em **Criar sala**. Você recebe um código tipo `PIMBO-K7X9QA`.
+3. Envie o código para o amigo. Ele entra em **Online 1v1**, digita o código e clica em **Entrar na sala**.
+4. Quem cria é o **host**: simula a física e envia snapshots. Quem entra envia apenas inputs e habilidades.
+
+Funciona com qualquer forma de login, inclusive **Jogar sem conta**. A sinalização usa o servidor público do PeerJS, e a mídia usa WebRTC com STUN; redes muito restritas podem exigir TURN.
+
+O transporte usa dois canais: **controle** (confiável, para input/chute/habilidade) e **estado** (não-confiável, para snapshots a ~30 Hz). O cliente interpola os snapshots e faz predição local da própria barra; o host zera o input remoto se ficar 250 ms sem heartbeat (evita barra "colada" quando o `keyup` se perde). O histórico enviado nos snapshots é limitado para não inflar os pacotes.
+
+Para diagnosticar lag, abra o console no navegador do cliente e chame `netStats()`. Ele mostra `rttMs` (latência ida-e-volta), `receivedSnapshots` e `isHost`.
+
+### Testando com outra pessoa (tunnel)
+
+Com o `npm run dev` rodando, em outro terminal:
+
+```bash
+cloudflared tunnel --url http://localhost:5173
+```
+
+O comando imprime uma URL `https://<algo>.trycloudflare.com`. Abra nos dois navegadores, crie a sala em um e entre com o código no outro. O `vite.config.ts` já libera hosts externos no dev server.
+
+Para publicar de verdade, o build estático (`npm run build` → `dist/`) pode ir para **Cloudflare Pages** ou **Workers Static Assets**. O Firebase Web SDK continua funcionando no navegador; só lembre de definir as variáveis `VITE_FIREBASE_*` no build e autorizar o domínio no Firebase Auth.
 
 ## Rodando localmente
 
@@ -227,10 +260,11 @@ npm run dev
 - [x] Painel de detalhes das habilidades (barra, gatilho, custo, cooldown e bônus).
 - [x] Upload de rosto e corpo inteiro no criador (placeholders quando não há imagem).
 - [x] Menu dentro da partida: pausa, reiniciar, trocar personagem e voltar ao menu.
-- [x] Heróis Paulo (Cópia), Jhonas a Sombra (Roletada) e Kenji (Rebote).
+- [x] Elenco oficial: Allan, Paulo (Cópia), Jhonas (Roletada), Kenji (Rebote) e Gulias (Mão Grande).
 - [x] Queda natural da mesa puxando a bola para o gol em cada metade do campo.
 - [x] Tema claro de boteco no login e menus; campo limpo, sem títulos/painéis no jogo.
 - [x] Fogo na arena após 60 s sem gol, vitória por 3 pontos e stack ao chegar a 10.
-- [ ] Transporte realtime da partida (PeerJS/WebSocket) e modo Online 1v1.
-- [ ] Autoridade/anti-cheat da partida.
-- [ ] UI de lobby/matchmaking integrada ao Firebase.
+- [x] Transporte realtime da partida (PeerJS/WebRTC) e modo Online 1v1 por sala.
+- [x] UI de sala: criar, copiar código e entrar.
+- [ ] Autoridade/anti-cheat robusto (hoje o host é autoritativo, mas roda no navegador).
+- [ ] Servidor autoritativo com Durable Object (evolução do transporte).

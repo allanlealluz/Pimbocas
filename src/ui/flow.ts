@@ -1,5 +1,14 @@
-import { listHeroes, registerCustomHero, unregisterCustomHero } from "../domain/heroes";
+import { HEROES, listHeroes, registerCustomHero } from "../domain/heroes";
 import type { HeroDefinition, HeroStats, Role } from "../domain/types";
+import {
+  cloneControlScheme,
+  DEFAULT_CONTROL_SCHEME,
+  findBindingConflict,
+  loadControlScheme,
+  saveControlScheme,
+  setBinding,
+  type ControlScheme,
+} from "../game/input";
 import type { AiDifficulty } from "../game/match";
 import {
   createFirebaseService,
@@ -20,10 +29,12 @@ import {
   STAT_MAX,
   STAT_MIN,
   authScreen,
+  controlsScreen,
   creatorScreen,
   howToScreen,
   menuScreen,
   modesScreen,
+  onlineScreen,
   selectScreen,
   type AuthMode,
   type HeroDraft,
@@ -31,6 +42,15 @@ import {
 } from "./screens";
 
 type ImageKind = "face" | "body";
+
+export interface MatchResultData {
+  won: boolean;
+  winnerName: string;
+  scoreLeft: number;
+  scoreRight: number;
+  stage: number;
+  online: boolean;
+}
 
 /** Reduz uploads a um data URL pequeno o suficiente para Firestore/localStorage. */
 async function fileToDataUrl(file: File, maxSize: number): Promise<string> {
@@ -81,7 +101,10 @@ export interface AppFlowOptions {
   root: HTMLElement;
   gameScreen: HTMLElement;
   onStartMatch: (heroId: string, difficulty: AiDifficulty) => void;
+  onStartOnline: (mode: "create" | "join", code?: string) => void;
+  onCancelOnline: () => void;
   onEndMatch: () => void;
+  onControlsChange: (scheme: ControlScheme) => void;
 }
 
 /** Controla as telas fora do campo: auth, menu, modos, seleção e editor. */
@@ -89,24 +112,37 @@ export class AppFlow {
   private readonly root: HTMLElement;
   private readonly gameScreen: HTMLElement;
   private readonly onStartMatch: AppFlowOptions["onStartMatch"];
+  private readonly onStartOnline: AppFlowOptions["onStartOnline"];
+  private readonly onCancelOnline: AppFlowOptions["onCancelOnline"];
   private readonly onEndMatch: AppFlowOptions["onEndMatch"];
+  private readonly onControlsChange: AppFlowOptions["onControlsChange"];
   private readonly localService = new FirebaseServiceStub();
   private service: FirebaseService = createFirebaseService();
 
   private screen: ScreenName = "auth";
   private paused = false;
+  private resultVisible = false;
   private authMode: AuthMode = "login";
   private profile: PlayerProfile | null = null;
-  private selectedHeroId = "coringa";
+  private selectedHeroId = "paulo";
   private difficulty: AiDifficulty = "medio";
   private draft: HeroDraft = createHeroDraft();
   private busy = false;
+  private onlineStatus = "";
+  private roomCodeInput = "";
+  private createdRoomCode: string | null = null;
+  private onlineActive = false;
+  private controlScheme: ControlScheme = loadControlScheme();
+  private waitingForRebind: string | null = null;
 
   constructor(options: AppFlowOptions) {
     this.root = options.root;
     this.gameScreen = options.gameScreen;
     this.onStartMatch = options.onStartMatch;
+    this.onStartOnline = options.onStartOnline;
+    this.onCancelOnline = options.onCancelOnline;
     this.onEndMatch = options.onEndMatch;
+    this.onControlsChange = options.onControlsChange;
 
     this.root.addEventListener("click", (e) => this.onClick(e));
     this.root.addEventListener("submit", (e) => void this.onSubmit(e));
@@ -117,15 +153,90 @@ export class AppFlow {
     this.gameScreen.querySelectorAll<HTMLElement>("[data-pause-action]").forEach((button) => {
       button.addEventListener("click", () => this.onPauseAction(button.dataset.pauseAction));
     });
+    this.gameScreen.querySelectorAll<HTMLElement>("[data-result-action]").forEach((button) => {
+      button.addEventListener("click", () => this.onResultAction(button.dataset.resultAction));
+    });
+    // Captura a próxima tecla durante o rebinding. Usa capture para que o atalho
+    // não acione o jogo ao mesmo tempo (ex.: números das habilidades).
     window.addEventListener("keydown", (e) => {
-      if (e.code === "Escape" && this.screen === "game") {
+      if (!this.waitingForRebind) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const id = this.waitingForRebind;
+      if (e.code === "Escape") {
+        this.waitingForRebind = null;
+        this.render();
+        return;
+      }
+      const conflict = findBindingConflict(this.controlScheme, id, e.code);
+      if (conflict) {
+        this.setError(conflict === "reserved"
+          ? "Essa tecla é reservada pelo navegador. Escolha outra."
+          : "Essa tecla já está em uso. Escolha outra.");
+        return;
+      }
+      if (!setBinding(this.controlScheme, id, e.code)) return;
+      saveControlScheme(this.controlScheme);
+      this.onControlsChange(cloneControlScheme(this.controlScheme));
+      this.waitingForRebind = null;
+      this.render();
+    }, true);
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Escape" && this.screen === "game" && !this.resultVisible) {
         e.preventDefault();
         this.setPaused(!this.paused);
       }
     });
   }
 
-  isPlaying(): boolean { return this.screen === "game" && !this.paused; }
+  isPlaying(): boolean { return this.screen === "game" && !this.paused && !this.resultVisible; }
+
+  getProfile(): PlayerProfile | null { return this.profile; }
+
+  getHeroId(): string { return this.selectedHeroId; }
+
+  getControlScheme(): ControlScheme { return cloneControlScheme(this.controlScheme); }
+
+  showOnline(): void {
+    this.onlineStatus = "";
+    this.createdRoomCode = null;
+    this.roomCodeInput = "";
+    this.show("online");
+  }
+
+  setOnlineStatus(message: string, code?: string): void {
+    const isNewCode = !!code && !this.createdRoomCode;
+    this.onlineStatus = message;
+    if (code) this.createdRoomCode = code;
+    if (this.screen !== "online") return;
+    if (isNewCode) {
+      this.render();
+      return;
+    }
+    const text = this.root.querySelector<HTMLElement>("[data-online-status] p");
+    if (text) text.textContent = message;
+  }
+
+  private setOnlinePauseButtons(online: boolean): void {
+    for (const action of ["restart", "select"]) {
+      const button = this.gameScreen.querySelector<HTMLElement>(`[data-pause-action="${action}"]`);
+      if (button) button.hidden = online;
+    }
+  }
+
+  enterOnlineGame(): void {
+    this.onlineActive = true;
+    this.setOnlinePauseButtons(true);
+    this.setPaused(false);
+    this.show("game");
+  }
+
+  exitOnlineToMenu(): void {
+    this.onlineActive = false;
+    this.setOnlinePauseButtons(false);
+    this.onEndMatch();
+    this.show("modes");
+  }
 
   private setPaused(paused: boolean): void {
     this.paused = paused;
@@ -134,6 +245,7 @@ export class AppFlow {
   }
 
   private onPauseAction(action?: string): void {
+    if (this.onlineActive && (action === "restart" || action === "select")) return;
     switch (action) {
       case "resume": this.setPaused(false); break;
       case "restart": this.restartMatch(); break;
@@ -142,8 +254,69 @@ export class AppFlow {
     }
   }
 
+  /** Mostra o resultado sem destruir a partida: o campo fica congelado atrás. */
+  showMatchResult(data: MatchResultData): void {
+    this.resultVisible = true;
+    this.setPaused(false);
+    const overlay = this.gameScreen.querySelector<HTMLElement>("#result-menu");
+    if (!overlay) return;
+    overlay.hidden = false;
+
+    const eyebrow = overlay.querySelector<HTMLElement>("[data-result-eyebrow]");
+    const title = overlay.querySelector<HTMLElement>("[data-result-title]");
+    const detail = overlay.querySelector<HTMLElement>("[data-result-detail]");
+    const score = overlay.querySelector<HTMLElement>("[data-result-score]");
+    const hint = overlay.querySelector<HTMLElement>("[data-result-hint]");
+    if (eyebrow) eyebrow.textContent = data.online ? "ONLINE · FIM DE PARTIDA" : "FIM DE PARTIDA";
+    if (title) {
+      title.textContent = data.won ? "VITÓRIA!" : "DERROTA";
+      title.classList.toggle("lost", !data.won);
+    }
+    if (detail) detail.textContent = `${data.winnerName} venceu no stack ${data.stage}.`;
+    if (score) {
+      score.innerHTML = `<span>VOCÊ</span><b>${data.scoreLeft}</b><i>×</i><b>${data.scoreRight}</b><span>ADVERSÁRIO</span>`;
+    }
+    for (const action of ["restart", "select"]) {
+      const button = overlay.querySelector<HTMLElement>(`[data-result-action="${action}"]`);
+      if (button) button.hidden = data.online;
+    }
+    if (hint) {
+      hint.textContent = data.online
+        ? "A sala terminou. Volte ao menu para abrir outra."
+        : "Escolha um botão para continuar.";
+    }
+  }
+
+  private hideResult(): void {
+    this.resultVisible = false;
+    const overlay = this.gameScreen.querySelector<HTMLElement>("#result-menu");
+    if (overlay) overlay.hidden = true;
+  }
+
+  private onResultAction(action?: string): void {
+    if (!this.resultVisible) return;
+    this.hideResult();
+    if (this.onlineActive && action !== "menu") return;
+    switch (action) {
+      case "restart": this.restartMatch(); break;
+      case "select": this.changeCharacter(); break;
+      case "menu": this.exitMatch(); break;
+    }
+  }
+
+  private async loadGlobalHeroes(): Promise<void> {
+    try {
+      // O elenco é global: carrega antes do perfil para a seleção já usar as
+      // edições salvas no Firestore (ou no stub local, sem Firebase).
+      for (const hero of await this.service.listHeroes()) registerCustomHero(hero);
+    } catch (error) {
+      console.warn("[Pimbocas] não foi possível carregar o elenco global:", error);
+    }
+  }
+
   async start(): Promise<void> {
     this.show("auth");
+    await this.loadGlobalHeroes();
     try {
       const restored = await this.service.restoreSession();
       if (restored && !this.profile) this.acceptProfile(restored);
@@ -155,11 +328,15 @@ export class AppFlow {
   // ---------- Navegação ----------
 
   private show(screen: ScreenName): void {
+    if (screen !== "controls") this.waitingForRebind = null;
     this.screen = screen;
     this.root.hidden = screen === "game";
     this.gameScreen.hidden = screen !== "game";
-    if (screen !== "game") this.setPaused(false);
-    if (screen !== "game") this.render();
+    if (screen !== "game") {
+      this.hideResult();
+      this.setPaused(false);
+      this.render();
+    }
   }
 
   private render(): void {
@@ -174,9 +351,11 @@ export class AppFlow {
       case "auth": html = authScreen(this.authMode); break;
       case "menu": html = menuScreen(profile!); break;
       case "modes": html = modesScreen(profile!, this.difficulty); break;
+      case "online": html = onlineScreen(profile!, this.onlineStatus, this.createdRoomCode, this.roomCodeInput); break;
       case "select": html = selectScreen(profile!); break;
       case "creator": html = creatorScreen(profile!, this.draft); break;
-      case "howto": html = howToScreen(); break;
+      case "howto": html = howToScreen(this.controlScheme, this.profile); break;
+      case "controls": html = controlsScreen(profile!, this.controlScheme, this.waitingForRebind); break;
       default: html = menuScreen(profile!);
     }
     this.root.innerHTML = html;
@@ -184,6 +363,7 @@ export class AppFlow {
 
   private startMatch(): void {
     if (!this.profile) return;
+    this.hideResult();
     this.setPaused(false);
     this.show("game");
     this.onStartMatch(this.selectedHeroId, this.difficulty);
@@ -191,32 +371,33 @@ export class AppFlow {
 
   private restartMatch(): void {
     if (!this.profile) return;
+    this.hideResult();
     this.setPaused(false);
     this.onStartMatch(this.selectedHeroId, this.difficulty);
   }
 
   private changeCharacter(): void {
     if (!this.profile) return;
+    this.hideResult();
     this.setPaused(false);
     this.onEndMatch();
     this.show("select");
   }
 
   private exitMatch(): void {
+    this.hideResult();
     this.setPaused(false);
     this.onEndMatch();
     this.show("menu");
   }
 
   private acceptProfile(profile: PlayerProfile): void {
-    // Heróis salvos com o orçamento antigo são rebalanceados ao entrar.
-    const customHeroes = profile.customHeroes
-      .filter((hero) => hero.id !== "coringa")
-      .map((hero) => registerCustomHero(hero));
+    // O elenco vem da coleção global. customHeroes do perfil é legado e
+    // ignorado para garantir que só os cinco heróis oficiais apareçam.
     const selectedHeroId = listHeroes().some((h) => h.id === profile.selectedHeroId)
       ? profile.selectedHeroId
-      : "coringa";
-    this.profile = { ...profile, customHeroes, selectedHeroId };
+      : "paulo";
+    this.profile = { ...profile, customHeroes: [], selectedHeroId };
     this.selectedHeroId = selectedHeroId;
     this.show("menu");
   }
@@ -273,10 +454,17 @@ export class AppFlow {
       this.showAbilityInfo(infoEl.dataset.abilityInfoId, count || undefined);
     }
     const el = target.closest<HTMLElement>(
-      "[data-action],[data-auth-tab],[data-select-hero],[data-edit-hero],[data-delete-hero],[data-difficulty],[data-color],[data-bar-preset]",
+      "[data-action],[data-auth-tab],[data-select-hero],[data-edit-hero],[data-difficulty],[data-color],[data-bar-preset],[data-rebind]",
     );
     if (!el || this.busy) return;
 
+    if (el.dataset.rebind) {
+      this.waitingForRebind = el.dataset.rebind;
+      const error = this.root.querySelector<HTMLElement>("[data-error]");
+      if (error) error.textContent = "";
+      this.render();
+      return;
+    }
     if (el.dataset.authTab) {
       this.authMode = el.dataset.authTab as AuthMode;
       this.render();
@@ -292,25 +480,10 @@ export class AppFlow {
       return;
     }
     if (el.dataset.editHero) {
-      const hero = this.profile?.customHeroes.find((h) => h.id === el.dataset.editHero);
+      const hero = listHeroes().find((h) => h.id === el.dataset.editHero);
       if (!hero) return;
       this.draft = draftFromHero(hero);
       this.show("creator");
-      return;
-    }
-    if (el.dataset.deleteHero) {
-      void this.run(async () => {
-        const hero = this.profile?.customHeroes.find((h) => h.id === el.dataset.deleteHero);
-        if (!hero || !window.confirm(`Excluir ${hero.name}?`)) return;
-        const profile = this.profile!;
-        profile.customHeroes = profile.customHeroes.filter((h) => h.id !== hero.id);
-        if (profile.selectedHeroId === hero.id) profile.selectedHeroId = "coringa";
-        unregisterCustomHero(hero.id);
-        await this.service.saveProfile(profile);
-        await this.service.saveSelectedHero(profile.uid, profile.selectedHeroId);
-        this.selectedHeroId = profile.selectedHeroId;
-        this.render();
-      });
       return;
     }
     if (el.dataset.difficulty) {
@@ -338,14 +511,48 @@ export class AppFlow {
     }
 
     switch (el.dataset.action) {
+      case "home":
+        if (this.screen === "online" || this.onlineActive) {
+          this.onCancelOnline();
+          this.onlineActive = false;
+          this.createdRoomCode = null;
+          this.setOnlinePauseButtons(false);
+        }
+        this.show("menu");
+        break;
       case "play": this.show("modes"); break;
-      case "menu": this.show("menu"); break;
+      case "menu":
+        if (this.screen === "online") {
+          this.onCancelOnline();
+          this.createdRoomCode = null;
+          this.show("modes");
+        } else {
+          this.show("menu");
+        }
+        break;
+      case "online": this.showOnline(); break;
+      case "create-room": this.onStartOnline("create"); break;
+      case "join-room": this.onStartOnline("join", this.roomCodeInput); break;
+      case "cancel-online":
+        this.onCancelOnline();
+        this.createdRoomCode = null;
+        this.show("modes");
+        break;
       case "select": this.show("select"); break;
       case "creator":
         this.draft = createHeroDraft();
         this.show("creator");
         break;
       case "howto": this.show("howto"); break;
+      case "controls": this.show("controls"); break;
+      case "reset-controls":
+        this.controlScheme = cloneControlScheme(DEFAULT_CONTROL_SCHEME);
+        this.waitingForRebind = null;
+        saveControlScheme(this.controlScheme);
+        this.onControlsChange(cloneControlScheme(this.controlScheme));
+        this.render();
+        break;
+      case "controls-back": this.show("menu"); break;
       case "start-match": this.startMatch(); break;
       case "google":
         void this.run(async () => this.acceptProfile(await this.service.signInWithGoogle()));
@@ -356,6 +563,7 @@ export class AppFlow {
       case "local":
         void this.run(async () => {
           this.service = this.localService;
+          await this.loadGlobalHeroes();
           this.acceptProfile(await this.localService.restoreSession() ?? await this.localService.signIn());
         });
         break;
@@ -394,6 +602,10 @@ export class AppFlow {
 
   private async onInput(event: Event): Promise<void> {
     const el = event.target as HTMLInputElement | HTMLSelectElement;
+    if (el.dataset?.roomCode !== undefined) {
+      this.roomCodeInput = (el as HTMLInputElement).value;
+      return;
+    }
     const imageKind = el.dataset?.image as ImageKind | undefined;
     if (imageKind === "face" || imageKind === "body") {
       const file = (el as HTMLInputElement).files?.[0];
@@ -493,28 +705,30 @@ export class AppFlow {
     if (this.draft.abilities.length > 4) return this.setError("Escolha no máximo 4 habilidades.");
 
     const preset = BAR_PRESETS.find((p) => p.id === this.draft.barPreset) ?? BAR_PRESETS[1];
+    const id = this.draft.id ?? `custom_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const isBaseHero = Object.prototype.hasOwnProperty.call(HEROES, id);
     const hero: HeroDefinition = {
-      id: this.draft.id ?? `custom_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      id,
       name,
       role: this.draft.role,
-      description: `Personagem criado por ${profile.displayName}. Barra ${preset.label.toLowerCase()} e estilo ${ROLE_LABELS[this.draft.role].toLowerCase()}.`,
+      description: isBaseHero
+        ? `Herói do elenco oficial editado. Barra ${preset.label.toLowerCase()} e estilo ${ROLE_LABELS[this.draft.role].toLowerCase()}.`
+        : `Personagem criado por ${profile.displayName}. Barra ${preset.label.toLowerCase()} e estilo ${ROLE_LABELS[this.draft.role].toLowerCase()}.`,
       stats: { ...this.draft.stats },
       specialBar: { segments: [...preset.segments] },
       abilities: [...this.draft.abilities],
       color: HERO_COLORS.includes(this.draft.color) ? this.draft.color : HERO_COLORS[2],
       faceImage: this.draft.faceImage,
       bodyImage: this.draft.bodyImage,
-      custom: true,
+      custom: !isBaseHero,
     };
 
     const savedHero = registerCustomHero(hero);
-    profile.customHeroes = this.draft.id
-      ? profile.customHeroes.map((h) => h.id === savedHero.id ? savedHero : h)
-      : [...profile.customHeroes, savedHero];
+    // Grava no elenco global: a edição vale para todos os jogadores.
+    await this.service.saveHero(savedHero);
     profile.selectedHeroId = savedHero.id;
-    await this.service.saveProfile(profile);
     await this.service.saveSelectedHero(profile.uid, savedHero.id);
-    this.selectedHeroId = hero.id;
+    this.selectedHeroId = savedHero.id;
     this.show("select");
   }
 }

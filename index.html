@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Pimbocas — Pebolim Heroes</title>
+    <title>Pimbocas — Pebolim Arena</title>
   </head>
   <body>
     <div id="app">
@@ -33,11 +33,11 @@
             </div>
 
             <div class="controls-hint">
-              <span><b>Q W E R</b> barras</span>
-              <span><b>↑ ↓</b> mover</span>
-              <span><b>→</b> chutar frente</span>
-              <span><b>←</b> chutar trás</span>
-              <span><b>1-4</b> especial</span>
+              <span><b data-hint="rods">Q W E R</b> barras</span>
+              <span><b data-hint="move">↑ ↓</b> mover</span>
+              <span><b data-hint="kickForward">→</b> chutar frente</span>
+              <span><b data-hint="kickBackward">←</b> chutar trás</span>
+              <span><b data-hint="abilities">1-4</b> especial</span>
               <span><b>Esc</b> menu</span>
             </div>
           </section>
@@ -56,6 +56,21 @@
               <button type="button" class="btn ghost" data-pause-action="menu">Voltar ao menu</button>
             </div>
             <small><b>Esc</b> também volta ao jogo</small>
+          </div>
+        </div>
+
+        <div id="result-menu" class="result-menu" hidden>
+          <div class="result-card" role="dialog" aria-modal="true" aria-label="Resultado da partida">
+            <span class="result-eyebrow" data-result-eyebrow>FIM DE PARTIDA</span>
+            <h2 data-result-title>VITÓRIA!</h2>
+            <p data-result-detail></p>
+            <div class="result-score" data-result-score></div>
+            <div class="result-actions">
+              <button type="button" class="btn primary" data-result-action="restart">Jogar de novo</button>
+              <button type="button" class="btn outline" data-result-action="select">Trocar herói</button>
+              <button type="button" class="btn ghost" data-result-action="menu">Menu principal</button>
+            </div>
+            <small data-result-hint></small>
           </div>
         </div>
       </div>

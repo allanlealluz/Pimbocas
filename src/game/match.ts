@@ -1,5 +1,5 @@
 import { ABILITIES, ABILITY_COLORS, getAbility, getAbilityPowerMult } from "../domain/abilities";
-import { getHero } from "../domain/heroes";
+import { getHero, listHeroes } from "../domain/heroes";
 import { STAT_REFERENCE } from "../domain/stats";
 import type { AbilityDefinition, ChargeEvent, HeroDefinition, RodId } from "../domain/types";
 import {
@@ -95,9 +95,9 @@ const AI_TUNING: Record<AiDifficulty, {
   /** Herói base usado pelo adversário (copiado com id próprio). */
   heroId: string;
 }> = {
-  facil: { chaseSpeed: 150, kickChance: 0.02, abilityRate: 0.12, heroId: "coringa" },
-  medio: { chaseSpeed: 220, kickChance: 0.055, abilityRate: 0.25, heroId: "artilheiro" },
-  dificil: { chaseSpeed: 300, kickChance: 0.1, abilityRate: 0.4, heroId: "muralha" },
+  facil: { chaseSpeed: 150, kickChance: 0.02, abilityRate: 0.12, heroId: "kenji" },
+  medio: { chaseSpeed: 220, kickChance: 0.055, abilityRate: 0.25, heroId: "jhonas" },
+  dificil: { chaseSpeed: 300, kickChance: 0.1, abilityRate: 0.4, heroId: "gulias" },
 };
 
 /**
@@ -118,6 +118,10 @@ const AI_ABILITY_POOL = new Set([
 ]);
 
 export interface MatchState {
+  /** `solo` roda a IA localmente; `online` recebe os inputs do adversário pela rede. */
+  mode: "solo" | "online";
+  /** No online, o host simula e transmite snapshots; o cliente apenas aplica. */
+  isHost: boolean;
   phase: "lobby" | "playing" | "paused" | "finished";
   tick: number;
   nowMs: number;
@@ -211,6 +215,8 @@ export function createDemoMatch(heroId: string, difficulty: AiDifficulty = "medi
     name: `IA · ${aiHeroBase.name}`,
   };
   return {
+    mode: "solo",
+    isHost: true,
     phase: "playing",
     tick: 0,
     nowMs: performance.now(),
@@ -248,6 +254,61 @@ export function createDemoMatch(heroId: string, difficulty: AiDifficulty = "medi
       `Partida iniciada com ${hero.name} (${hero.role}) contra ${aiHero.name}.`,
       `${aiHero.name}: ${aiHero.abilities.length} habilidade(s) pronta(s) para usar.`,
     ],
+  };
+}
+
+/** Partida 1v1: o adversário ocupa o lado direito no lugar da IA. */
+export function createOnlineMatch(
+  localHeroId: string,
+  remoteHeroId: string,
+  localName: string,
+  remoteName: string,
+  isHost: boolean,
+  localSide: "left" | "right" = "left",
+): MatchState {
+  const localHero = getHero(localHeroId);
+  const remoteHero = getHero(remoteHeroId);
+  const field = { ...DEFAULT_FIELD };
+  const ball = createBall(field);
+  resetBall(ball, field, 1);
+
+  return {
+    mode: "online",
+    isHost,
+    phase: "playing",
+    tick: 0,
+    nowMs: performance.now(),
+    field,
+    ball,
+    score: { left: 0, right: 0 },
+    stage: 1,
+    noGoalMs: 0,
+    heat: 0,
+    winner: null,
+    rods: createAllRods(),
+    effects: [],
+    toast: null,
+    combo: null,
+    elastic: null,
+    lockMovementUntilMs: 0,
+    reboteCounterAvailable: false,
+    copiedAbilityId: null,
+    localPlayer: {
+      id: "local",
+      name: localName || "Você",
+      side: localSide,
+      hero: localHero,
+      abilitySystem: createAbilitySystem(localHero),
+    },
+    aiPlayer: {
+      id: "remote",
+      name: remoteName || "Adversário",
+      side: localSide === "left" ? "right" : "left",
+      hero: remoteHero,
+      abilitySystem: createAbilitySystem(remoteHero),
+    },
+    ai: { difficulty: "medio", chaseSpeed: 220, kickChance: 0, abilityRate: 0 },
+    log: [`Online 1v1: ${localName || "Você"} contra ${remoteName || "Adversário"}.`],
   };
 }
 
@@ -378,7 +439,7 @@ function updateHeat(match: MatchState, deltaMs: number): void {
 function finishMatch(match: MatchState, side: "left" | "right"): void {
   match.phase = "finished";
   match.winner = side;
-  const winnerName = side === "left" ? match.localPlayer.name : "IA";
+  const winnerName = side === "left" ? match.localPlayer.name : match.aiPlayer.name;
   showToast(match, "FIM DE JOGO", `${winnerName} venceu por ${WIN_BY_POINTS} pontos!`, side === "left" ? "#8affc1" : "#ff9f87");
   pushLog(match, `${winnerName} venceu no stack ${match.stage}.`);
 }
@@ -393,7 +454,7 @@ function advanceStage(match: MatchState): void {
   match.ai.chaseSpeed = Math.round(match.ai.chaseSpeed * 1.08);
   match.ai.kickChance = Math.min(0.2, match.ai.kickChance * 1.12);
   showToast(match, `STACK ${match.stage}`, "Placar zerado. A mesa esquenta mais rápido!", "#ffb04a");
-  pushLog(match, `Stack ${match.stage}: placar zerado e IA mais agressiva.`);
+  pushLog(match, `Stack ${match.stage}: placar zerado e mesa mais quente.`);
 }
 
 /** Vitória por 3 pontos; ao chegar em 10 sem essa margem, sobe de stack. */
@@ -873,8 +934,10 @@ export function updateMatch(match: MatchState, deltaMs: number, nowMs: number): 
     if (match.toast.ageMs >= match.toast.lifeMs) match.toast = null;
   }
 
-  updateAIAbilities(match, deltaMs);
-  updateAI(match, deltaMs);
+  if (match.mode === "solo") {
+    updateAIAbilities(match, deltaMs);
+    updateAI(match, deltaMs);
+  }
   updateCombo(match);
 
   // Subpassos curtos evitam tunneling em chutes fortes.
@@ -930,8 +993,8 @@ export function updateMatch(match: MatchState, deltaMs: number, nowMs: number): 
       cleanGoalKick ? "GOL DE GOLEIRO +2" : "GOL",
     );
     if (cleanGoalKick) {
-      showToast(match, "GOL DE GOLEIRO DA IA", "Chute limpo: 2 pontos!", color);
-      pushLog(match, "A IA fez um gol de goleiro limpo: +2 pontos.");
+      showToast(match, `GOL DE GOLEIRO · ${match.aiPlayer.name}`, "Chute limpo: 2 pontos!", color);
+      pushLog(match, `${match.aiPlayer.name} fez um gol de goleiro limpo: +2 pontos.`);
     }
     match.noGoalMs = 0;
     match.heat = 0;
@@ -1025,7 +1088,7 @@ function updateAIAbilities(match: MatchState, deltaMs: number): void {
   if (ready.length === 0) return;
 
   // Prefere o tipo que combina com a jogada, mas nunca fica parada se o herói
-  // só tiver habilidades do outro tipo (ex.: muralha com a bola no ataque).
+  // só tiver habilidades do outro tipo (ex.: Gulias com a bola no ataque).
   const preferred = ready.filter(
     (runtime) => (getAbility(runtime.abilityId).role === "defensivo") === defending,
   );
@@ -1174,27 +1237,35 @@ function tryAutoExecuteAbility(
   return false;
 }
 
-/** Escolhe a habilidade a copiar: prefere uma que combine com a região da bola. */
-function pickCopyTarget(match: MatchState, player: PlayerMatchState = match.localPlayer): string | null {
-  const equipped = player.hero.abilities;
-  const pool = Object.keys(ABILITIES).filter((id) => id !== "copia" && !equipped.includes(id));
-  if (pool.length === 0) return null;
+/**
+ * Habilidades que não podem ser copiadas: dependem de estado global criado no
+ * herói original (rebote, roletada, elástico, combo) ou de outro empréstimo.
+ */
+const COPY_BLOCKED = new Set(["copia", "roletada", "rebote", "combo_breaker", "elastico"]);
 
-  const ball = match.ball;
-  const nearOwnGoal = player.side === "left"
-    ? ball.pos.x < match.field.width * 0.34
-    : ball.pos.x > match.field.width * 0.66;
-  const nearAttack = player.side === "left"
-    ? ball.pos.x > match.field.width * 0.58
-    : ball.pos.x < match.field.width * 0.42;
-  const preferredRole: AbilityDefinition["role"] | null = nearOwnGoal
-    ? "defensivo"
-    : nearAttack ? "ofensivo" : null;
-  const preferred = preferredRole
-    ? pool.filter((id) => ABILITIES[id]!.role === preferredRole)
-    : [];
-  const candidates = preferred.length > 0 ? preferred : pool;
-  return candidates[Math.floor(Math.random() * candidates.length)] ?? null;
+/**
+ * A Cópia rouba uma habilidade de alguém ali na mesa: primeiro do adversário,
+ * depois de qualquer outro herói do elenco. Nunca sortia do próprio herói.
+ */
+function pickCopyTarget(match: MatchState, player: PlayerMatchState = match.localPlayer): string | null {
+  const equipped = new Set(player.hero.abilities);
+  const opponents = player === match.localPlayer ? match.aiPlayer : match.localPlayer;
+
+  const usable = (hero: HeroDefinition) => hero.abilities.filter((id) =>
+    ABILITIES[id] && !COPY_BLOCKED.has(id) && !equipped.has(id));
+
+  // Prioridade absoluta: o adversário. É a habilidade "de alguém ali" que o
+  // jogador espera ver quando pressiona Cópia.
+  const fromOpponent = usable(opponents.hero);
+  if (fromOpponent.length > 0) {
+    return fromOpponent[Math.floor(Math.random() * fromOpponent.length)]!;
+  }
+
+  // Fallback: outro herói qualquer do catálogo (o Paulo sempre tem opções).
+  const others = listHeroes()
+    .filter((hero) => hero.id !== player.hero.id)
+    .flatMap(usable);
+  return others[Math.floor(Math.random() * others.length)] ?? null;
 }
 
 /** Empresta uma habilidade por um tempo, sem custo extra de energia. */
@@ -1210,16 +1281,14 @@ function grantBorrowedAbility(
     if (runtime.borrowed) delete system.abilities[id];
   }
 
-  const target = getAbility(targetId);
-  const needsContact = target.trigger === "next_kick" || target.trigger === "next_defense";
+  // Só guarda o slot: a habilidade é disparada quando o jogador apertar a tecla.
   system.abilities[targetId] = {
     abilityId: targetId,
     cooldownRemainingMs: 0,
-    armedUntilMs: needsContact
-      ? nowMs + Math.max(1600, target.activationWindowMs ?? 1500)
-      : null,
-    activeUntilMs: nowMs + durationMs,
+    armedUntilMs: null,
+    activeUntilMs: null,
     borrowed: true,
+    borrowedUntilMs: nowMs + durationMs,
   };
   if (player.side === "left") match.copiedAbilityId = targetId;
 }
@@ -1233,22 +1302,7 @@ export function tryActivateAbility(
   const ability = getAbility(abilityId);
   const system = player.abilitySystem;
   const prefix = player.side === "right" ? "IA · " : "";
-  const borrowed = system.abilities[abilityId];
-
-  // Habilidade copiada já vem armada: a tecla só dispara o efeito, sem custo.
-  if (borrowed?.borrowed) {
-    if (borrowed.armedUntilMs !== null && nowMs < borrowed.armedUntilMs) {
-      const auto = tryAutoExecuteAbility(match, ability, player);
-      pushLog(match, auto
-        ? `${prefix}${ability.name} (cópia) pegou a bola e executou sozinha!`
-        : `${prefix}${ability.name} (cópia) pronta para o próximo toque.`);
-      showToast(match, `CÓPIA · ${ability.name}`, auto ? `AUTO · ${ability.hint}` : ability.hint, ABILITY_COLORS.copia ?? "#ffe7a3");
-      return { ok: true, ability };
-    }
-    pushLog(match, `${prefix}${ability.name} (cópia) já está ativa.`);
-    showToast(match, `CÓPIA · ${ability.name}`, "Já está ativa.", ABILITY_COLORS.copia ?? "#ffe7a3");
-    return { ok: false, reason: "Habilidade copiada já está ativa." };
-  }
+  const isBorrowed = system.abilities[abilityId]?.borrowed === true;
 
   const result = activateAbility(system, abilityId, nowMs);
   if (result.ok) {
@@ -1288,11 +1342,13 @@ export function tryActivateAbility(
 
     // Tenta executar na hora; se não houver bola perto, mantém armada.
     const auto = tryAutoExecuteAbility(match, ability, player);
+    const cost = isBorrowed ? "cópia" : `-${ability.cost} energia`;
     pushLog(match, auto
-      ? `${prefix}${ability.name} pegou a bola e executou sozinha!`
+      ? `${prefix}${ability.name}${isBorrowed ? " (cópia)" : ""} pegou a bola e executou sozinha!`
       : ability.trigger === "timed"
-        ? `${prefix}${ability.name} ativada (-${ability.cost} energia).`
-        : `${prefix}${ability.name} armada (-${ability.cost} energia).`);
+        ? `${prefix}${ability.name} ativada (${cost}).`
+        : `${prefix}${ability.name} armada (${cost}).`);
+    if (isBorrowed) toastTitle = `CÓPIA · ${toastTitle}`;
     if (prefix) toastTitle = `${prefix.trim()} ${toastTitle}`;
     showToast(match, toastTitle, auto && abilityId !== "copia" ? `AUTO · ${toastDetail}` : toastDetail, toastColor);
   } else {
@@ -1375,13 +1431,25 @@ export function performKick(
   performKickForPlayer(match, match.localPlayer, rodId, power01, direction, reach);
 }
 
-export function movePlayerRod(match: MatchState, rodId: RodId, axis: -1 | 0 | 1, deltaMs: number): void {
+/** Move a barra de qualquer jogador (usado pelo host para o input remoto). */
+export function moveRodForPlayer(
+  match: MatchState,
+  player: PlayerMatchState,
+  rodId: RodId,
+  axis: -1 | 0 | 1,
+  deltaMs: number,
+): void {
   if (match.nowMs < match.lockMovementUntilMs) return; // Roletada travou o manete
-  const rod = getPlayerRod(match, rodId);
+  const rod = getPlayerRod(match, rodId, player);
   if (!rod) return;
-  const mods = getHeroModifiers(match, rodId);
+  const mods = getPlayerModifiers(match, player, rodId);
   rod.yOffset += axis * 340 * mods.rodSpeedMult * (deltaMs / 1000);
   clampRodOffset(rod, match.field.height);
+}
+
+export function movePlayerRod(match: MatchState, rodId: RodId, axis: -1 | 0 | 1, deltaMs: number): void {
+  if (match.nowMs < match.lockMovementUntilMs) return; // Roletada travou o manete
+  moveRodForPlayer(match, match.localPlayer, rodId, axis, deltaMs);
 }
 
 export function setPlayerRodCharge(match: MatchState, rodId: RodId, charging: boolean): void {

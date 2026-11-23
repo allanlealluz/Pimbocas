@@ -117,6 +117,8 @@ export interface AbilityRuntimeState {
   activeUntilMs: number | null;
   /** Habilidade emprestada pela Cópia (removida quando o efeito acaba). */
   borrowed?: boolean;
+  /** Validade do empréstimo; a ativação pelo jogador não a reinicia. */
+  borrowedUntilMs?: number;
 }
 
 export type ChargeEventType =

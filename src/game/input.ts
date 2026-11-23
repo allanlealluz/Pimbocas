@@ -31,6 +31,127 @@ export const DEFAULT_CONTROL_SCHEME: ControlScheme = {
   abilitySlots: ["Digit1", "Digit2", "Digit3", "Digit4"],
 };
 
+export const CONTROL_STORAGE_KEY = "pimbocas.controls.v1";
+
+export function cloneControlScheme(scheme: ControlScheme): ControlScheme {
+  return {
+    rods: scheme.rods.map((binding) => ({ ...binding })),
+    moveUp: scheme.moveUp,
+    moveDown: scheme.moveDown,
+    kickForward: scheme.kickForward,
+    kickBackward: scheme.kickBackward,
+    abilitySlots: [...scheme.abilitySlots],
+  };
+}
+
+const KEY_LABELS: Record<string, string> = {
+  ArrowUp: "↑",
+  ArrowDown: "↓",
+  ArrowLeft: "←",
+  ArrowRight: "→",
+  Space: "Espaço",
+  Escape: "Esc",
+  Enter: "Enter",
+  NumpadEnter: "Enter",
+  Backspace: "Backspace",
+  ShiftLeft: "Shift",
+  ShiftRight: "Shift",
+  ControlLeft: "Ctrl",
+  ControlRight: "Ctrl",
+  AltLeft: "Alt",
+  AltRight: "Alt",
+};
+
+export function keyLabel(code: string): string {
+  if (KEY_LABELS[code]) return KEY_LABELS[code]!;
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit\d$/.test(code)) return code.slice(5);
+  if (/^Numpad\d$/.test(code)) return `Num ${code.slice(6)}`;
+  return code;
+}
+
+interface BindingEntry { id: string; code: string; }
+
+function collectBindings(scheme: ControlScheme): BindingEntry[] {
+  return [
+    ...scheme.rods.map((binding) => ({ id: binding.rod, code: binding.key })),
+    { id: "moveUp", code: scheme.moveUp },
+    { id: "moveDown", code: scheme.moveDown },
+    { id: "kickForward", code: scheme.kickForward },
+    { id: "kickBackward", code: scheme.kickBackward },
+    ...scheme.abilitySlots.map((code, index) => ({ id: `ability${index + 1}`, code })),
+  ];
+}
+
+export function getBinding(scheme: ControlScheme, id: string): string | null {
+  return collectBindings(scheme).find((binding) => binding.id === id)?.code ?? null;
+}
+
+function setBindingCode(scheme: ControlScheme, id: string, code: string): boolean {
+  const rod = scheme.rods.find((binding) => binding.rod === id);
+  if (rod) { rod.key = code; return true; }
+  if (id === "moveUp") { scheme.moveUp = code; return true; }
+  if (id === "moveDown") { scheme.moveDown = code; return true; }
+  if (id === "kickForward") { scheme.kickForward = code; return true; }
+  if (id === "kickBackward") { scheme.kickBackward = code; return true; }
+  const ability = /^ability([1-4])$/.exec(id);
+  if (ability) {
+    const index = Number(ability[1]) - 1;
+    if (index >= 0 && index < scheme.abilitySlots.length) {
+      scheme.abilitySlots[index] = code;
+      return true;
+    }
+  }
+  return false;
+}
+
+const RESERVED_KEYS = new Set(["Escape", "Tab", "F5", "F11", "F12"]);
+
+/** Retorna o id da binding conflitante, ou null se a tecla estiver livre. */
+export function findBindingConflict(scheme: ControlScheme, id: string, code: string): string | null {
+  if (RESERVED_KEYS.has(code)) return "reserved";
+  return collectBindings(scheme).find((binding) => binding.id !== id && binding.code === code)?.id ?? null;
+}
+
+export function setBinding(scheme: ControlScheme, id: string, code: string): boolean {
+  if (findBindingConflict(scheme, id, code)) return false;
+  return setBindingCode(scheme, id, code);
+}
+
+export function loadControlScheme(): ControlScheme {
+  const scheme = cloneControlScheme(DEFAULT_CONTROL_SCHEME);
+  try {
+    const raw = localStorage.getItem(CONTROL_STORAGE_KEY);
+    if (!raw) return scheme;
+    const parsed = JSON.parse(raw) as Partial<ControlScheme>;
+    for (const binding of parsed.rods ?? []) {
+      if (binding && typeof binding.rod === "string" && typeof binding.key === "string") {
+        setBindingCode(scheme, binding.rod, binding.key);
+      }
+    }
+    for (const id of ["moveUp", "moveDown", "kickForward", "kickBackward"] as const) {
+      const code = parsed[id];
+      if (typeof code === "string") setBindingCode(scheme, id, code);
+    }
+    if (Array.isArray(parsed.abilitySlots)) {
+      parsed.abilitySlots.slice(0, scheme.abilitySlots.length).forEach((code, index) => {
+        if (typeof code === "string") scheme.abilitySlots[index] = code;
+      });
+    }
+  } catch {
+    // Configuração corrompida: volta ao padrão.
+  }
+  return scheme;
+}
+
+export function saveControlScheme(scheme: ControlScheme): void {
+  try {
+    localStorage.setItem(CONTROL_STORAGE_KEY, JSON.stringify(scheme));
+  } catch {
+    // localStorage indisponível: controles valem só nesta sessão.
+  }
+}
+
 export interface KickChargeState {
   /** 1 = frente, -1 = trás */
   direction: 1 | -1;

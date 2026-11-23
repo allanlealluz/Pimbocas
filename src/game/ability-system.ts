@@ -92,8 +92,10 @@ export function tickAbilitySystem(state: AbilitySystemState, deltaMs: number, no
     if (runtime.activeUntilMs !== null && nowMs >= runtime.activeUntilMs) {
       runtime.activeUntilMs = null;
     }
-    // Habilidade emprestada pela Cópia some quando o efeito termina.
-    if (runtime.borrowed && runtime.activeUntilMs === null && runtime.armedUntilMs === null) {
+    // Habilidade emprestada pela Cópia some quando o empréstimo termina,
+    // mesmo que o jogador ainda não tenha apertado o slot copiado.
+    if (runtime.borrowed && (runtime.borrowedUntilMs ?? runtime.activeUntilMs) !== null
+      && nowMs >= (runtime.borrowedUntilMs ?? runtime.activeUntilMs ?? 0)) {
       delete state.abilities[runtime.abilityId];
     }
   }
@@ -115,12 +117,15 @@ export function activateAbility(
   if (runtime.armedUntilMs !== null && nowMs < runtime.armedUntilMs) {
     return { ok: false, reason: "Habilidade já está armada." };
   }
-  if (runtime.activeUntilMs !== null && nowMs < runtime.activeUntilMs) {
+  if (runtime.activeUntilMs !== null && nowMs < runtime.activeUntilMs && !runtime.borrowed) {
     return { ok: false, reason: "Habilidade já está ativa." };
   }
-  if (state.bar.current < ability.cost) return { ok: false, reason: "Energia insuficiente." };
+  // A habilidade copiada não custa energia: ela já foi paga pela Cópia.
+  if (!runtime.borrowed && state.bar.current < ability.cost) {
+    return { ok: false, reason: "Energia insuficiente." };
+  }
 
-  state.bar.current -= ability.cost;
+  if (!runtime.borrowed) state.bar.current -= ability.cost;
   runtime.cooldownRemainingMs = ability.cooldownMs;
 
   if (ability.trigger === "instant" || ability.trigger === "timed") {
@@ -149,11 +154,12 @@ export function consumeArmedAbility(
   }
   runtime.armedUntilMs = null;
   // Janela mínima para o efeito valer no próprio chute que o disparou.
-  // Habilidade copiada mantém o tempo total do empréstimo, não o da habilidade original.
-  const minimumUntilMs = nowMs + Math.max(300, ability.effect.durationMs ?? 0);
-  runtime.activeUntilMs = runtime.borrowed
-    ? Math.max(runtime.activeUntilMs ?? 0, minimumUntilMs)
-    : minimumUntilMs;
+  // Na cópia, respeita o tempo que ainda resta do empréstimo.
+  const minimumUntilMs = Math.min(
+    nowMs + Math.max(300, ability.effect.durationMs ?? 0),
+    runtime.borrowedUntilMs ?? Number.POSITIVE_INFINITY,
+  );
+  runtime.activeUntilMs = Math.max(runtime.activeUntilMs ?? 0, minimumUntilMs);
   return true;
 }
 
