@@ -1,11 +1,19 @@
 import { ABILITY_COLORS, getAbility } from "../domain/abilities";
 import { getAbilityViews } from "../game/ability-system";
 import { getRodFiguresY, type RodState } from "../game/rods";
-import { getHeroModifiers, type ElasticState, type KickEffect, type MatchState, type MatchToast } from "../game/match";
+import {
+  getHeroModifiers,
+  type ChoreographyState,
+  type ElasticState,
+  type KickEffect,
+  type MatchState,
+  type MatchToast,
+  type RotationState,
+} from "../game/match";
 
 const RAIL = 46;
 
-interface RodFx { color: string; armed: boolean }
+interface RodFx { color: string; armed: boolean; spinAngle?: number }
 
 export function renderField(
   canvas: HTMLCanvasElement,
@@ -38,6 +46,14 @@ export function renderField(
       if (!prev || view.active) rodFx.set(rodId, { color, armed: !view.active });
     }
   }
+  // O meio do dono da rotação gira de verdade; o adversário vê só a aura.
+  if (match.rotation && match.rotation.ownerSide === localSide) {
+    rodFx.set(match.rotation.rodId, {
+      color: match.rotation.color,
+      armed: false,
+      spinAngle: match.rotation.angle,
+    });
+  }
   const ballGlow = views.find((v) => v.active)?.ability.id;
 
   ctx.clearRect(0, 0, cw, ch);
@@ -54,6 +70,8 @@ export function renderField(
   drawPitch(ctx, w, h, match.field.goalMouth);
   if (match.heat > 0) drawArenaFire(ctx, w, h, match.heat);
   drawAbilityFields(ctx, match, localSide);
+  if (match.choreography) drawChoreography(ctx, match.choreography, match);
+  if (match.rotation) drawRotationField(ctx, match, match.rotation, match.nowMs);
   if (match.elastic) drawElasticOrbit(ctx, match.elastic, match.nowMs);
   drawEffects(ctx, match.effects);
   drawRods(ctx, match.rods, w, h, selectedRodId, previewAbilityId, rodFx, localSide);
@@ -423,6 +441,81 @@ function drawAbilityFields(ctx: CanvasRenderingContext2D, match: MatchState, loc
   }
 }
 
+/** Os Gêmeos: linha alinhada até o boneco que vai receber e finalizar. */
+function drawChoreography(
+  ctx: CanvasRenderingContext2D,
+  state: ChoreographyState,
+  match: MatchState,
+): void {
+  const color = state.color;
+  const t = performance.now();
+  const x = match.ball.pos.x;
+  const y = match.ball.pos.y;
+  ctx.save();
+  ctx.strokeStyle = hexToRgba(color, 0.8);
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([9, 7]);
+  ctx.lineDashOffset = -t / 38;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(state.targetX, state.targetY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = hexToRgba(color, 0.9);
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(state.targetX, state.targetY, 16 + Math.sin(t / 130) * 3, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = "900 11px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("✓", state.targetX, state.targetY);
+
+  ctx.fillStyle = hexToRgba(color, 0.95);
+  ctx.font = "900 12px system-ui, sans-serif";
+  ctx.fillText(getAbility(state.abilityId).name.toUpperCase(), (x + state.targetX) / 2, (y + state.targetY) / 2 - 16);
+  ctx.restore();
+}
+
+/** Churrasqueiro: o meio girando fica com anéis e setas rodando. */
+function drawRotationField(
+  ctx: CanvasRenderingContext2D,
+  match: MatchState,
+  state: RotationState,
+  nowMs: number,
+): void {
+  const rod = match.rods.find((r) => r.side === state.ownerSide && r.id === state.rodId);
+  if (!rod) return;
+  const color = state.color;
+  const alpha = 0.35 + 0.65 * Math.min(1, state.remainingMs / Math.max(1, state.totalMs * 0.6));
+  const x = rod.xRatio * match.field.width;
+  ctx.save();
+  for (const y of getRodFiguresY(rod, match.field.height)) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(state.angle);
+    ctx.strokeStyle = hexToRgba(color, 0.75 * alpha);
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([12, 8]);
+    ctx.lineDashOffset = -nowMs / 45;
+    ctx.beginPath(); ctx.arc(0, 0, 28, 0.3, Math.PI * 1.85); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = hexToRgba(color, 0.95 * alpha);
+    ctx.beginPath();
+    ctx.moveTo(25, -13);
+    ctx.lineTo(33, -4);
+    ctx.lineTo(20, -2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.fillStyle = hexToRgba(color, 0.95 * alpha);
+  ctx.font = "900 12px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(state.kickUsed ? "MEIO GIRANDO" : "MEIO GIRANDO · AGUARDANDO BOLA", x, 26);
+  ctx.restore();
+}
+
 /** Elástico: órbita visível enquanto a bola "rodeia" o atacante. */
 function drawElasticOrbit(ctx: CanvasRenderingContext2D, elastic: ElasticState, nowMs: number): void {
   const color = elastic.color;
@@ -595,7 +688,7 @@ function drawRods(
     }
 
     for (const y of getRodFiguresY(rod, h)) {
-      drawFigure(ctx, x, y, rod.kickAngle, rod.color, rod.side, selected || isPreviewTarget, rod.charge, fx?.color);
+      drawFigure(ctx, x, y, rod.kickAngle, rod.color, rod.side, selected || isPreviewTarget, rod.charge, fx?.color, fx?.spinAngle);
     }
     if (dimmed) ctx.restore();
   }
@@ -611,11 +704,12 @@ function drawFigure(
   selected: boolean,
   charge: number,
   abilityColor?: string,
+  spinAngle?: number,
 ): void {
   ctx.save();
   ctx.translate(x, y);
   const dir = side === "left" ? 1 : -1;
-  ctx.rotate(angle * 0.35);
+  ctx.rotate(angle * 0.35 + (spinAngle ?? 0));
 
   ctx.fillStyle = "rgba(0,0,0,0.18)";
   ctx.beginPath(); ctx.ellipse(0, 12, 10, 4, 0, 0, Math.PI * 2); ctx.fill();
@@ -662,10 +756,54 @@ function drawBall(
   glowColor?: string,
 ): void {
   const x = ball.pos.x;
-  const y = ball.pos.y;
+  const hopProgress = ball.explosionHopTotalMs > 0
+    ? 1 - ball.explosionHopRemainingMs / ball.explosionHopTotalMs
+    : 0;
+  const hopOffset = ball.explosionHopRemainingMs > 0
+    ? Math.sin(Math.PI * hopProgress) * ball.explosionHopHeight
+    : 0;
+  const y = ball.pos.y - hopOffset;
+  const compressed = ball.explosionCompressMs > 0;
   const r = ball.radius;
   const roll = ball.roll;
   const speed = Math.hypot(ball.vel.x, ball.vel.y);
+
+  // Explosão: sombra no chão mostra o pulo; a bola comprimida vibra antes dele.
+  if (hopOffset > 0) {
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    ctx.beginPath();
+    ctx.ellipse(x, ball.pos.y + r * 0.6, r * 1.1, r * 0.35, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  if (compressed) {
+    const color = ABILITY_COLORS.explosao ?? "#ff5d3b";
+    const t = performance.now();
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.strokeStyle = hexToRgba(color, 0.85);
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * (1.6 + Math.sin(t / 55) * 0.12), r * (0.85 + Math.cos(t / 55) * 0.08), 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (ball.explosionRollingMs > 0 && !compressed) {
+    const color = ABILITY_COLORS.explosao ?? "#ff5d3b";
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(roll * 1.4);
+    ctx.strokeStyle = hexToRgba(color, 0.75);
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i += 1) {
+      const a = (i * Math.PI * 2) / 3;
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * (r + 6), Math.sin(a) * (r + 6), 5, 0, Math.PI * 1.6);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   // Cruzador Estelar: mostra a trajetória "travada" e o giro que não morre.
   if (ball.guideRemainingMs > 0 && Math.hypot(ball.guideVx, ball.guideVy) > 1) {
@@ -809,6 +947,7 @@ function drawBall(
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(roll);
+  if (compressed) ctx.scale(1.35, 0.62);
   ctx.fillStyle = "#f7fafc";
   ctx.shadowColor = glowColor ?? "rgba(0,0,0,0.35)";
   ctx.shadowBlur = glowColor ? 22 : 10;
@@ -822,9 +961,13 @@ function drawBall(
     ctx.fill();
   }
   ctx.restore();
+  ctx.save();
+  ctx.translate(x, y);
+  if (compressed) ctx.scale(1.35, 0.62);
   ctx.strokeStyle = "rgba(80,90,110,0.35)";
   ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
 }
 
 function drawScore(ctx: CanvasRenderingContext2D, left: number, right: number, w: number, stage: number): void {

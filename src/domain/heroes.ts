@@ -1,14 +1,14 @@
 import { normalizeHeroStats } from "./stats";
 import type { HeroDefinition } from "./types";
 
-/** Elenco oficial: cinco heróis, todos com 200 pontos de atributo. */
+/** Elenco oficial: sete heróis, todos com 200 pontos de atributo. */
 export const HEROES: Record<string, HeroDefinition> = {
   allan: {
     id: "allan",
     name: "Allan",
     role: "ofensivo",
     description:
-      "Canhoneiro da mesa. Chute no limite de 100 e quatro formas de enganar a defesa: cruzador, fantasma, combo e o elástico que rodeia o boneco antes de atacar.",
+      "Canhoneiro da mesa. Chute no limite de 100 e três formas de enganar a defesa: cruzador, fantasma e combo. Com três habilidades, cada uma ganha +12% de poder.",
     stats: {
       kickPower: 100,
       ballControl: 40,
@@ -16,9 +16,9 @@ export const HEROES: Record<string, HeroDefinition> = {
       defense: 15,
       goalkeeping: 10,
     },
-    // 20 / 30 / 50: combo, fantasma e cruzador; elástico completa o set.
+    // 20 / 30 / 50: combo, fantasma e cruzador — o elástico não faz parte do kit.
     specialBar: { segments: [20, 30, 50] },
-    abilities: ["cruzador_estelar", "chute_fantasma", "combo_breaker", "elastico"],
+    abilities: ["combo_breaker", "chute_fantasma", "cruzador_estelar"],
     color: "#ff6bd6",
   },
   paulo: {
@@ -88,6 +88,40 @@ export const HEROES: Record<string, HeroDefinition> = {
     specialBar: { segments: [50, 50] },
     abilities: ["forca_bruta", "chute_goleiro", "mao_grande"],
     color: "#6fd7ff",
+  },
+  geminios: {
+    id: "geminios",
+    name: "Os Gêmeos",
+    role: "defensivo",
+    description:
+      "Defesa equilibrada e passes milimétricos: o Chute Duplo leva do meio ao ataque, a Sequência de Toques alinha o zagueiro ao meio e o Rebote castiga quem encosta na zaga.",
+    stats: {
+      kickPower: 40,
+      ballControl: 50,
+      rodSpeed: 45,
+      defense: 45,
+      goalkeeping: 20,
+    },
+    specialBar: { segments: [30, 30, 40] },
+    abilities: ["chute_duplo", "rebote", "sequencia_toques"],
+    color: "#7ee8fa",
+  },
+  churrasqueiro: {
+    id: "churrasqueiro",
+    name: "Churrasqueiro",
+    role: "coringa",
+    description:
+      "Coringa da grelha: gira o meio-campo para devolver a bola em qualquer direção e usa a Explosão para comprimir, pular e mandar a bola rodando ao gol. Duas habilidades com +25% de poder.",
+    stats: {
+      kickPower: 55,
+      ballControl: 45,
+      rodSpeed: 50,
+      defense: 30,
+      goalkeeping: 20,
+    },
+    specialBar: { segments: [50, 50] },
+    abilities: ["rotacionar", "explosao"],
+    color: "#ff9f43",
   },
 };
 

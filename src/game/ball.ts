@@ -37,6 +37,20 @@ export interface BallState {
   /** Força Bruta: tempo restante de quicada elástica. */
   bruteMs: number;
   bruteBounce: number;
+  /** Explosão: compressão antes do pulo e pulo curto por cima do boneco. */
+  explosionCompressMs: number;
+  explosionHopRemainingMs: number;
+  explosionHopTotalMs: number;
+  explosionHopHeight: number;
+  explosionHopStartX: number;
+  explosionHopStartY: number;
+  explosionHopTargetX: number;
+  explosionHopTargetY: number;
+  /** Explosão: giro e velocidade guardados para a saída. */
+  explosionSpin: number;
+  explosionSpeed: number;
+  explosionDir: 1 | -1;
+  explosionRollingMs: number;
   /** Calor da arena (0-1): deixa a bola mais rápida e mais quicante. */
   heat: number;
 }
@@ -78,6 +92,18 @@ export function clearBallEffects(ball: BallState): void {
   ball.lightningDir = 1;
   ball.bruteMs = 0;
   ball.bruteBounce = 0.82;
+  ball.explosionCompressMs = 0;
+  ball.explosionHopRemainingMs = 0;
+  ball.explosionHopTotalMs = 0;
+  ball.explosionHopHeight = 0;
+  ball.explosionHopStartX = 0;
+  ball.explosionHopStartY = 0;
+  ball.explosionHopTargetX = 0;
+  ball.explosionHopTargetY = 0;
+  ball.explosionSpin = 0;
+  ball.explosionSpeed = 0;
+  ball.explosionDir = 1;
+  ball.explosionRollingMs = 0;
 }
 
 export function createBall(field: FieldConfig = DEFAULT_FIELD): BallState {
@@ -103,6 +129,18 @@ export function createBall(field: FieldConfig = DEFAULT_FIELD): BallState {
     lightningDir: 1,
     bruteMs: 0,
     bruteBounce: 0.82,
+    explosionCompressMs: 0,
+    explosionHopRemainingMs: 0,
+    explosionHopTotalMs: 0,
+    explosionHopHeight: 0,
+    explosionHopStartX: 0,
+    explosionHopStartY: 0,
+    explosionHopTargetX: 0,
+    explosionHopTargetY: 0,
+    explosionSpin: 0,
+    explosionSpeed: 0,
+    explosionDir: 1,
+    explosionRollingMs: 0,
     heat: 0,
   };
   return ball;
@@ -135,6 +173,8 @@ export interface BallUpdateResult {
   phantomEnded: boolean;
   /** Chute Relâmpago encontrou a parede e virou para o gol neste passo. */
   lightningBounced: boolean;
+  /** Explosão terminou o pulo e saiu rodando neste passo. */
+  explosionLaunched: boolean;
 }
 
 /**
@@ -143,7 +183,37 @@ export interface BallUpdateResult {
  */
 export function updateBall(ball: BallState, deltaMs: number, field: FieldConfig = DEFAULT_FIELD): BallUpdateResult {
   const dt = deltaMs / 1000;
-  const result: BallUpdateResult = { goal: null, phantomEnded: false, lightningBounced: false };
+  const result: BallUpdateResult = { goal: null, phantomEnded: false, lightningBounced: false, explosionLaunched: false };
+
+  // Explosão: a bola fica comprimida e imóvel por um instante antes do pulo.
+  if (ball.explosionCompressMs > 0) {
+    ball.explosionCompressMs = Math.max(0, ball.explosionCompressMs - deltaMs);
+    ball.roll += 0.03 * (deltaMs / 16.67);
+    return result;
+  }
+
+  // Explosão: pulo curto e alinhado por cima do boneco; a física normal só
+  // volta depois que a bola toca o chão.
+  if (ball.explosionHopRemainingMs > 0) {
+    ball.explosionHopRemainingMs = Math.max(0, ball.explosionHopRemainingMs - deltaMs);
+    const total = Math.max(1, ball.explosionHopTotalMs);
+    const t = Math.min(1, 1 - ball.explosionHopRemainingMs / total);
+    ball.pos.x = ball.explosionHopStartX + (ball.explosionHopTargetX - ball.explosionHopStartX) * t;
+    ball.pos.y = ball.explosionHopStartY + (ball.explosionHopTargetY - ball.explosionHopStartY) * t;
+    ball.roll += 0.08 * (deltaMs / 16.67);
+    ball.stuckMs = 0;
+    if (ball.explosionHopRemainingMs === 0) {
+      ball.explosionHopTotalMs = 0;
+      ball.vel.x = ball.explosionDir * ball.explosionSpeed;
+      ball.vel.y = (Math.random() - 0.5) * 50;
+      ball.spin = ball.explosionSpin;
+      ball.explosionSpin = 0;
+      ball.explosionSpeed = 0;
+      ball.explosionDir = 1;
+      result.explosionLaunched = true;
+    }
+    return result;
+  }
 
   // Anti-ficada: se quase parada por muito tempo, empurra de volta ao centro.
   const speed = Math.hypot(ball.vel.x, ball.vel.y);
@@ -156,6 +226,9 @@ export function updateBall(ball: BallState, deltaMs: number, field: FieldConfig 
   if (ball.bruteMs > 0) {
     ball.bruteMs = Math.max(0, ball.bruteMs - deltaMs);
     if (ball.bruteMs === 0) ball.bruteBounce = 0.82;
+  }
+  if (ball.explosionRollingMs > 0) {
+    ball.explosionRollingMs = Math.max(0, ball.explosionRollingMs - deltaMs);
   }
 
   // O Fantasma começa indo para o lado oposto da diagonal e depois retorna.

@@ -45,6 +45,28 @@ export interface AbilityEffect {
   lockMovementMs?: number;
   /** Rebote: força do contra-ataque quando a bola bate na barra. */
   rebotePower?: number;
+  /** Os Gêmeos: barra de destino do passe coreografado. */
+  choreographyTarget?: RodId;
+  /** Os Gêmeos: velocidade do passe alinhado (px/s). */
+  choreographySpeed?: number;
+  /** Os Gêmeos: força do arremate final depois do passe. */
+  choreographyPower?: number;
+  /** Churrasqueiro: velocidade angular do meio-campo girando (rad/s). */
+  rotationSpeed?: number;
+  /** Churrasqueiro: tempo de compressão antes do pulo. */
+  explosionCompressMs?: number;
+  /** Churrasqueiro: duração do pulo curto. */
+  explosionHopMs?: number;
+  /** Churrasqueiro: distância do pulo em direção ao gol. */
+  explosionHopDistance?: number;
+  /** Churrasqueiro: altura visual do pulo. */
+  explosionHopHeight?: number;
+  /** Churrasqueiro: giro extra ao sair rodando. */
+  explosionSpin?: number;
+  /** Churrasqueiro: velocidade extra na saída. */
+  explosionSpeedMult?: number;
+  /** Churrasqueiro: tempo do rastro girando após o pulo. */
+  explosionRollingMs?: number;
   /** Rótulo livre para prototipagem */
   tag?: string;
 }

@@ -60,7 +60,7 @@ export function renderHud(match: MatchState, ctx: HudContext): void {
   if (markersEl) {
     const views = getAbilityViews(abilitySystem, match.nowMs);
     setHtml("markers", markersEl, getEquippedAbilityIds(match)
-      .map((abilityId) => {
+      .map((abilityId, index) => {
         const ability = getAbility(abilityId);
         const runtime = abilitySystem.abilities[abilityId];
         const bottomPct = max > 0 ? ((ability.cost / max) * 100).toFixed(2) : "0";
@@ -75,7 +75,7 @@ export function renderHud(match: MatchState, ctx: HudContext): void {
         return `
           <div class="ability-marker ${classes}" data-preview-ability="${ability.id}"
                style="bottom:${bottomPct}%;color:${runtime?.borrowed ? (ABILITY_COLORS.copia ?? "#ffe7a3") : (ABILITY_COLORS[abilityId] ?? "#ffd9a0")}" tabindex="0" role="button" aria-label="${runtime?.borrowed ? "Cópia: " : ""}${ability.name}">
-            ${runtime?.borrowed ? "↳ " : ""}${ability.name}
+            <span class="marker-slot">${index + 1}</span>${runtime?.borrowed ? "↳ " : ""}${ability.name}
           </div>
         `;
       })

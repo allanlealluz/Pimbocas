@@ -1,5 +1,6 @@
 import { ABILITIES, ABILITY_COLORS, getAbility, getAbilityPowerMult } from "../domain/abilities";
 import { getHero, listHeroes } from "../domain/heroes";
+import { ROLE_IDENTITY_BONUS } from "../domain/roles";
 import { STAT_REFERENCE } from "../domain/stats";
 import type { AbilityDefinition, ChargeEvent, HeroDefinition, RodId } from "../domain/types";
 import {
@@ -85,6 +86,37 @@ export interface ElasticState {
   color: string;
 }
 
+/** Os Gêmeos: passe coreografado de uma barra para outra, com a bola alinhada. */
+export interface ChoreographyState {
+  abilityId: string;
+  ownerSide: "left" | "right";
+  rodId: RodId;
+  targetRodId: RodId;
+  targetFigureIndex: number;
+  direction: 1 | -1;
+  startX: number;
+  targetX: number;
+  targetY: number;
+  elapsedMs: number;
+  travelMs: number;
+  /** Força já multiplicada pelo bônus da coreografia. */
+  power: number;
+  speedMult: number;
+  color: string;
+}
+
+/** Churrasqueiro: o meio-campo gira e devolve a bola na direção de origem. */
+export interface RotationState {
+  ownerSide: "left" | "right";
+  rodId: RodId;
+  remainingMs: number;
+  totalMs: number;
+  angle: number;
+  angularSpeed: number;
+  kickUsed: boolean;
+  color: string;
+}
+
 export type AiDifficulty = "facil" | "medio" | "dificil";
 
 const AI_TUNING: Record<AiDifficulty, {
@@ -140,6 +172,8 @@ export interface MatchState {
   toast: MatchToast | null;
   combo: ComboState | null;
   elastic: ElasticState | null;
+  choreography: ChoreographyState | null;
+  rotation: RotationState | null;
   /** Roletada: até quando o manete do jogador fica travado. */
   lockMovementUntilMs: number;
   /** Rebote: o contra-ataque ainda está disponível nesta ativação. */
@@ -148,7 +182,14 @@ export interface MatchState {
   copiedAbilityId: string | null;
   localPlayer: PlayerMatchState;
   aiPlayer: PlayerMatchState;
-  ai: { difficulty: AiDifficulty; chaseSpeed: number; kickChance: number; abilityRate: number };
+  ai: {
+    difficulty: AiDifficulty;
+    chaseSpeed: number;
+    kickChance: number;
+    abilityRate: number;
+    /** Próxima janela em que a IA pode decidir usar uma habilidade. */
+    abilityCheckAtMs: number;
+  };
   log: string[];
 }
 
@@ -196,6 +237,16 @@ function applyAbilityPower(mods: AbilityModifiers, power: number): void {
   mods.roletadaSpeedMult = scale(mods.roletadaSpeedMult);
   mods.lockMovementMs *= power;
   mods.rebotePower = scale(mods.rebotePower);
+  mods.choreographySpeed *= power;
+  mods.choreographyPower = scale(mods.choreographyPower);
+  mods.rotationSpeed *= power;
+  mods.explosionSpeedMult = scale(mods.explosionSpeedMult);
+  mods.explosionCompressMs *= power;
+  mods.explosionHopMs *= power;
+  mods.explosionHopDistance *= power;
+  mods.explosionHopHeight *= power;
+  mods.explosionSpin *= power;
+  mods.explosionRollingMs *= power;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -232,6 +283,8 @@ export function createDemoMatch(heroId: string, difficulty: AiDifficulty = "medi
     toast: null,
     combo: null,
     elastic: null,
+    choreography: null,
+    rotation: null,
     lockMovementUntilMs: 0,
     reboteCounterAvailable: false,
     copiedAbilityId: null,
@@ -249,7 +302,13 @@ export function createDemoMatch(heroId: string, difficulty: AiDifficulty = "medi
       hero: aiHero,
       abilitySystem: createAbilitySystem(aiHero),
     },
-    ai: { difficulty, chaseSpeed: tuning.chaseSpeed, kickChance: tuning.kickChance, abilityRate: tuning.abilityRate },
+    ai: {
+      difficulty,
+      chaseSpeed: tuning.chaseSpeed,
+      kickChance: tuning.kickChance,
+      abilityRate: tuning.abilityRate,
+      abilityCheckAtMs: 0,
+    },
     log: [
       `Partida iniciada com ${hero.name} (${hero.role}) contra ${aiHero.name}.`,
       `${aiHero.name}: ${aiHero.abilities.length} habilidade(s) pronta(s) para usar.`,
@@ -290,6 +349,8 @@ export function createOnlineMatch(
     toast: null,
     combo: null,
     elastic: null,
+    choreography: null,
+    rotation: null,
     lockMovementUntilMs: 0,
     reboteCounterAvailable: false,
     copiedAbilityId: null,
@@ -307,7 +368,7 @@ export function createOnlineMatch(
       hero: remoteHero,
       abilitySystem: createAbilitySystem(remoteHero),
     },
-    ai: { difficulty: "medio", chaseSpeed: 220, kickChance: 0, abilityRate: 0 },
+    ai: { difficulty: "medio", chaseSpeed: 220, kickChance: 0, abilityRate: 0, abilityCheckAtMs: 0 },
     log: [`Online 1v1: ${localName || "Você"} contra ${remoteName || "Adversário"}.`],
   };
 }
@@ -384,6 +445,31 @@ export function getPlayerModifiers(match: MatchState, player: PlayerMatchState, 
   if (mods.rebote) {
     mods.rebotePower *= clamp(statScale(stats.kickPower, 0.01), 0.7, 1.9);
   }
+  if (mods.choreography) {
+    mods.choreographyPower *= clamp(statScale(stats.ballControl, 0.008), 0.8, 1.5);
+  }
+  if (mods.rotation) {
+    mods.rotationSpeed *= clamp(statScale(stats.ballControl, 0.01), 0.75, 1.6);
+  }
+  if (mods.explosion) {
+    const blastScale = clamp(statScale(stats.kickPower, 0.01), 0.7, 1.9);
+    mods.explosionSpeedMult *= blastScale;
+    mods.explosionSpin *= blastScale;
+  }
+
+  // Identidade da role: um empurrão pequeno e fixo, aplicado depois dos stats e
+  // do bônus por quantidade de habilidades. `ballDrain` menor = mais drenagem.
+  switch (player.hero.role) {
+    case "ofensivo":
+      mods.kickPowerMult *= 1 + ROLE_IDENTITY_BONUS;
+      break;
+    case "defensivo":
+      mods.ballDrain *= 1 - ROLE_IDENTITY_BONUS;
+      break;
+    case "coringa":
+      mods.rodSpeedMult *= 1 + ROLE_IDENTITY_BONUS;
+      break;
+  }
 
   return mods;
 }
@@ -399,12 +485,18 @@ export function pushLog(match: MatchState, message: string): void {
   match.log = match.log.slice(0, 8);
 }
 
-/** Slots equipados: habilidades do herói primeiro, depois a emprestada pela Cópia. */
+/**
+ * Slots equipados: o slot 1 é sempre a habilidade mais barata e o último, a
+ * mais cara, seguindo a mesma ordem de baixo para cima do termômetro. A
+ * habilidade emprestada pela Cópia fica por último, como slot extra.
+ */
 export function getEquippedAbilityIds(
   match: MatchState,
   player: PlayerMatchState = match.localPlayer,
 ): string[] {
-  const ids = [...player.hero.abilities];
+  const ids = [...player.hero.abilities].sort(
+    (a, b) => (getAbility(a)?.cost ?? 0) - (getAbility(b)?.cost ?? 0),
+  );
   for (const runtime of Object.values(player.abilitySystem.abilities)) {
     if (runtime.borrowed && !ids.includes(runtime.abilityId)) ids.push(runtime.abilityId);
   }
@@ -490,8 +582,35 @@ function getPlayerRod(
   return match.rods.find((r) => r.side === player.side && r.id === rodId);
 }
 
+function getPlayerBySide(match: MatchState, side: "left" | "right"): PlayerMatchState {
+  return side === "left" ? match.localPlayer : match.aiPlayer;
+}
+
 function getAIRods(match: MatchState): RodState[] {
   return match.rods.filter((r) => r.side === "right");
+}
+
+function nearestFigureIndex(rod: RodState, fieldHeight: number, y: number): number {
+  const figures = getRodFiguresY(rod, fieldHeight);
+  let index = 0;
+  let best = Infinity;
+  for (let i = 0; i < figures.length; i += 1) {
+    const dist = Math.abs(figures[i]! - y);
+    if (dist < best) {
+      best = dist;
+      index = i;
+    }
+  }
+  return index;
+}
+
+function stripChoreography(mods: AbilityModifiers): AbilityModifiers {
+  return {
+    ...mods,
+    choreography: false,
+    choreographyTarget: null,
+    activeIds: mods.activeIds.filter((id) => id !== "chute_duplo" && id !== "sequencia_toques"),
+  };
 }
 
 /**
@@ -517,8 +636,9 @@ function applyStellarDefense(match: MatchState): boolean {
 
 /** Zaga Magnética: atrai a bola para os bonecos mesmo sem encostar neles. */
 function applyMagneticDefense(match: MatchState, player: PlayerMatchState, deltaMs: number): void {
-  if (match.elastic) return;
+  if (match.elastic || match.choreography) return;
   const ball = match.ball;
+  if (ball.explosionCompressMs > 0 || ball.explosionHopRemainingMs > 0) return;
   const dt = deltaMs / 1000;
 
   for (const rodId of ["goleiro", "defesa"] as RodId[]) {
@@ -638,6 +758,141 @@ function updateElastic(match: MatchState, deltaMs: number): void {
   ball.stuckMs = 0;
   addEffect(match, ball.pos.x, ball.pos.y, 0.9, elastic.color, "ability", "ELÁSTICO");
   match.elastic = null;
+}
+
+/**
+ * Os Gêmeos: a bola não é chutada direto. Ela encosta no boneco, fica alinhada
+ * a um boneco da barra de destino e desliza devagar até lá; o arremate final
+ * sai do pé que recebeu o passe.
+ */
+function startChoreography(
+  match: MatchState,
+  rod: RodState,
+  effectivePower: number,
+  direction: 1 | -1,
+  mods: AbilityModifiers,
+): boolean {
+  const targetRodId = mods.choreographyTarget;
+  if (!targetRodId) return false;
+  const player = getPlayerBySide(match, rod.side);
+  const targetRod = getPlayerRod(match, targetRodId, player);
+  if (!targetRod) return false;
+
+  const ball = match.ball;
+  const abilityId = mods.activeIds.find((id) => id === "chute_duplo" || id === "sequencia_toques")
+    ?? (targetRodId === "ataque" ? "chute_duplo" : "sequencia_toques");
+  const color = ABILITY_COLORS[abilityId] ?? "#ffd166";
+  const targetFigureIndex = nearestFigureIndex(targetRod, match.field.height, ball.pos.y);
+  const targetX = targetRod.xRatio * match.field.width + direction * 26;
+  const startX = ball.pos.x;
+  const distance = Math.abs(targetX - startX);
+  const travelMs = clamp((distance / Math.max(120, mods.choreographySpeed)) * 1000, 260, 1500);
+  const targetY = getRodFiguresY(targetRod, match.field.height)[targetFigureIndex] ?? match.field.height / 2;
+
+  clearBallEffects(ball);
+  ball.vel.x = 0;
+  ball.vel.y = 0;
+  ball.spin = 0;
+  ball.stuckMs = 0;
+  ball.pos.y = targetY;
+  rod.lastContactMs = match.nowMs;
+
+  match.choreography = {
+    abilityId,
+    ownerSide: player.side,
+    rodId: rod.id,
+    targetRodId,
+    targetFigureIndex,
+    direction,
+    startX,
+    targetX,
+    targetY,
+    elapsedMs: 0,
+    travelMs,
+    power: effectivePower * mods.choreographyPower,
+    speedMult: mods.ballSpeedMult,
+    color,
+  };
+  addEffect(match, ball.pos.x, ball.pos.y, 0.8, color, "ability", getAbility(abilityId).name.toUpperCase());
+  return true;
+}
+
+/** Avança o passe alinhado e devolve a bola no pé da barra de destino. */
+function updateChoreography(match: MatchState, deltaMs: number): void {
+  const state = match.choreography;
+  if (!state) return;
+  const player = getPlayerBySide(match, state.ownerSide);
+  const targetRod = getPlayerRod(match, state.targetRodId, player);
+  if (!targetRod) {
+    match.choreography = null;
+    return;
+  }
+
+  const ball = match.ball;
+  state.elapsedMs = Math.min(state.travelMs, state.elapsedMs + deltaMs);
+  state.targetX = targetRod.xRatio * match.field.width + state.direction * 26;
+  state.targetY = getRodFiguresY(targetRod, match.field.height)[state.targetFigureIndex] ?? match.field.height / 2;
+  const t = state.travelMs > 0 ? state.elapsedMs / state.travelMs : 1;
+
+  ball.pos.x = state.startX + (state.targetX - state.startX) * t;
+  ball.pos.y = state.targetY;
+  ball.vel.x = 0;
+  ball.vel.y = 0;
+  ball.spin = 0;
+  ball.roll += (deltaMs / 1000) * 2;
+  ball.stuckMs = 0;
+
+  if (state.elapsedMs < state.travelMs) return;
+
+  const mods = stripChoreography(getPlayerModifiers(match, player, state.targetRodId));
+  // Mantém o bônus da coreografia mesmo se a janela de ativação terminou no trajeto.
+  mods.ballSpeedMult = Math.max(mods.ballSpeedMult, state.speedMult);
+  triggerRodKick(targetRod, Math.min(MAX_TRIGGER_POWER, state.power));
+  addEffect(match, ball.pos.x, ball.pos.y, 1, state.color, "ability", "ARREMATE");
+  match.choreography = null;
+  applyKickToBall(match, targetRod, state.power, state.direction, mods, AUTO_REACH_X, AUTO_REACH_Y);
+}
+
+/** Churrasqueiro: anima o meio girando e devolve a primeira bola que chegar. */
+function updateRotation(match: MatchState, deltaMs: number): void {
+  const state = match.rotation;
+  if (!state) return;
+  state.remainingMs = Math.max(0, state.remainingMs - deltaMs);
+  state.angle += state.angularSpeed * (deltaMs / 1000);
+
+  const player = getPlayerBySide(match, state.ownerSide);
+  const rod = getPlayerRod(match, state.rodId, player);
+  if (rod) {
+    rod.kickAngle = Math.sin(state.angle) * 1.25;
+    rod.kickVel = Math.cos(state.angle) * state.angularSpeed * 1.25;
+  }
+
+  if (state.remainingMs === 0) {
+    match.rotation = null;
+    return;
+  }
+  if (state.kickUsed || !rod || match.choreography || match.elastic) return;
+  const ball = match.ball;
+  if (ball.explosionCompressMs > 0 || ball.explosionHopRemainingMs > 0) return;
+  if (!ballNearRodFigure(match, rod, AUTO_REACH_X, AUTO_REACH_Y).hit) return;
+  if (Math.hypot(ball.vel.x, ball.vel.y) < 60) return;
+
+  // O meio girando devolve para onde a bola veio: frente ou trás conforme a chegada.
+  const attackDir: 1 | -1 = player.side === "left" ? 1 : -1;
+  const incoming = Math.sign(ball.vel.x) || (attackDir === 1 ? -1 : 1);
+  const direction: 1 | -1 = incoming === attackDir ? (attackDir === 1 ? -1 : 1) : attackDir;
+  const mods = getPlayerModifiers(match, player, state.rodId);
+  const effectivePower = Math.min(MAX_KICK_POWER, 0.9 * mods.kickPowerMult);
+  triggerRodKick(rod, Math.min(MAX_TRIGGER_POWER, effectivePower));
+  const hit = applyKickToBall(match, rod, effectivePower, direction, mods, AUTO_REACH_X, AUTO_REACH_Y);
+  if (!hit) return;
+
+  state.kickUsed = true;
+  addEffect(match, ball.pos.x, ball.pos.y, 1, state.color, "ability", "ROTAÇÃO");
+  const prefix = player.side === "right" ? "IA · " : "";
+  showToast(match, `${prefix}ROTAÇÃO!`, "O meio girou e devolveu a bola.", state.color);
+  pushLog(match, `${prefix}Meio girando devolveu a bola para ${direction === 1 ? "frente" : "trás"}.`);
+  registerAbilityCharge(match, player, { type: "attack_kick", power: effectivePower });
 }
 
 /** Rebote: o boneco devolve um chute forte assim que a bola encosta nele. */
@@ -805,12 +1060,18 @@ function applyKickToBall(
   const dir = direction ?? (rod.side === "left" ? 1 : -1);
   const power = Math.min(MAX_KICK_POWER, effectivePower);
   const visualPower = Math.min(1, power / 1.8);
+  // Os Gêmeos assumem a bola antes do chute comum: o passe alinhado termina
+  // com um arremate automático na barra de destino.
+  if (mods.choreography && startChoreography(match, rod, power, dir, mods)) return true;
   let speed = (260 + power * 760) * mods.ballSpeedMult;
   if (mods.goalkeeperKick) speed *= mods.goalkeeperKickSpeedMult;
   if (mods.brute) speed *= mods.bruteSpeedMult;
   const center = match.field.height / 2;
   const diagSign = match.ball.pos.y < center ? -1 : 1;
-  let vertical = ((match.ball.pos.y - y) / 40) * 180;
+  // Chutar com a barra em movimento dá uma leve inclinação: subiu, a bola sai
+  // subindo; desceu, sai descendo. O limite evita que um puxão vire bomba lateral.
+  const swingY = clamp(rod.vy * 0.45, -220, 220);
+  let vertical = ((match.ball.pos.y - y) / 40) * 180 + swingY;
   if (mods.diagonal || mods.stellar) {
     vertical += diagSign * (140 + power * 120) * (mods.stellar ? 1.35 : 1);
   }
@@ -822,7 +1083,7 @@ function applyKickToBall(
   rod.lastContactMs = match.nowMs;
   ball.vel.x = speed * dir;
   ball.vel.y = vertical + (Math.random() - 0.5) * 70;
-  ball.spin += mods.stellar ? dir * 20 : mods.diagonal ? dir * 9 : (Math.random() - 0.5) * 3;
+  ball.spin += mods.stellar ? dir * 20 : mods.rotation ? dir * 14 : mods.diagonal ? dir * 9 : (Math.random() - 0.5) * 3;
   ball.stuckMs = 0;
 
   // Cruzador: guarda o rumo e um giro que demora a sumir.
@@ -896,9 +1157,45 @@ function applyKickToBall(
     );
   }
 
+  // Explosão: a bola comprime, pula um pouco à frente e só depois sai rodando.
+  if (mods.explosion) {
+    const blastSpeed = speed * mods.explosionSpeedMult;
+    ball.lightningBounce = false;
+    ball.lightningSpeedMult = 1;
+    ball.bruteMs = 0;
+    ball.bruteBounce = 0.82;
+    ball.vel.x = 0;
+    ball.vel.y = 0;
+    ball.spin = 0;
+    ball.untouchedGoalKick = false;
+    ball.stuckMs = 0;
+    ball.explosionCompressMs = mods.explosionCompressMs;
+    ball.explosionHopRemainingMs = mods.explosionHopMs;
+    ball.explosionHopTotalMs = mods.explosionHopMs;
+    ball.explosionHopHeight = mods.explosionHopHeight;
+    ball.explosionHopStartX = ball.pos.x;
+    ball.explosionHopStartY = ball.pos.y;
+    ball.explosionHopTargetX = clamp(
+      ball.pos.x + dir * mods.explosionHopDistance,
+      ball.radius + 2,
+      match.field.width - ball.radius - 2,
+    );
+    ball.explosionHopTargetY = clamp(
+      ball.pos.y + (center - ball.pos.y) * 0.12,
+      ball.radius + 2,
+      match.field.height - ball.radius - 2,
+    );
+    ball.explosionSpin = dir * mods.explosionSpin;
+    ball.explosionSpeed = blastSpeed;
+    ball.explosionDir = dir;
+    ball.explosionRollingMs = mods.explosionRollingMs;
+  }
+
   const effectId = mods.stellar ? "cruzador_estelar"
     : mods.phantom ? "chute_fantasma"
     : mods.elastic ? "elastico"
+    : mods.explosion ? "explosao"
+    : mods.rotation ? "rotacionar"
     : mods.goalkeeperKick ? "chute_goleiro"
     : mods.roletada ? "roletada"
     : mods.rebote ? "rebote"
@@ -939,6 +1236,7 @@ export function updateMatch(match: MatchState, deltaMs: number, nowMs: number): 
     updateAI(match, deltaMs);
   }
   updateCombo(match);
+  updateRotation(match, deltaMs);
 
   // Subpassos curtos evitam tunneling em chutes fortes.
   let remaining = deltaMs;
@@ -948,9 +1246,13 @@ export function updateMatch(match: MatchState, deltaMs: number, nowMs: number): 
     const step = Math.min(PHYSICS_STEP_MS, remaining);
     remaining -= step;
 
-    // Enquanto o Elástico está ativo, a bola está "no pé" e não sofre física.
+    // Enquanto o Elástico ou a coreografia está ativo, a bola está "no pé".
     if (match.elastic) {
       updateElastic(match, step);
+      continue;
+    }
+    if (match.choreography) {
+      updateChoreography(match, step);
       continue;
     }
 
@@ -972,6 +1274,18 @@ export function updateMatch(match: MatchState, deltaMs: number, nowMs: number): 
         "RELÂMPAGO",
       );
     }
+    if (result.explosionLaunched) {
+      addEffect(
+        match,
+        match.ball.pos.x,
+        match.ball.pos.y,
+        1,
+        ABILITY_COLORS.explosao ?? "#ff5d3b",
+        "ability",
+        "EXPLOSÃO",
+      );
+    }
+    if (match.ball.explosionCompressMs > 0 || match.ball.explosionHopRemainingMs > 0) continue;
     resolveBallFigureCollisions(match);
     if (result.goal) {
       goal = result.goal;
@@ -1001,6 +1315,8 @@ export function updateMatch(match: MatchState, deltaMs: number, nowMs: number): 
     match.ball.heat = 0;
     match.combo = null;
     match.elastic = null;
+    match.choreography = null;
+    match.rotation = null;
     match.lockMovementUntilMs = 0;
     match.reboteCounterAvailable = false;
     registerGoalProgress(match, "right");
@@ -1026,6 +1342,8 @@ export function updateMatch(match: MatchState, deltaMs: number, nowMs: number): 
     match.ball.heat = 0;
     match.combo = null;
     match.elastic = null;
+    match.choreography = null;
+    match.rotation = null;
     match.lockMovementUntilMs = 0;
     match.reboteCounterAvailable = false;
     registerGoalProgress(match, "left");
@@ -1069,46 +1387,81 @@ function updateAI(match: MatchState, deltaMs: number): void {
   }
 }
 
-/** IA: escolhe e ativa sozinha uma habilidade do próprio herói. */
-function updateAIAbilities(match: MatchState, deltaMs: number): void {
+/**
+ * Oportunidade da habilidade para a IA (0 = guardar energia).
+ * A IA defende à direita: bola vindo com vel.x > 0 é ameaça ao próprio gol.
+ * Chutes só fazem sentido com a bola no pé de uma barra válida; defesas só
+ * quando a bola está chegando. Isso acaba com o disparo aleatório.
+ */
+function aiAbilityOpportunity(
+  match: MatchState,
+  player: PlayerMatchState,
+  ability: AbilityDefinition,
+): number {
+  const ball = match.ball;
+  const width = match.field.width;
+  const inOwnHalf = ball.pos.x > width * 0.5;
+  const incoming = ball.vel.x > 60;
+  const threat = inOwnHalf && incoming;
+  const speed = Math.hypot(ball.vel.x, ball.vel.y);
+  const near = findAutoRod(match, ability, player) !== null;
+
+  switch (ability.trigger) {
+    case "next_kick":
+      if (!near) return 0;
+      // Bola parada ou chegando devagar é o momento do chute armado.
+      return 3 + (speed < 500 ? 1 : 0) + (threat ? 1 : 0);
+    case "next_defense":
+      if (!incoming || !near) return 0;
+      return 3 + (threat ? 2 : 0);
+    case "timed":
+      if (ability.role === "defensivo") {
+        if (!threat && !near) return 0;
+        return 2 + (threat ? 2 : 0);
+      }
+      if (near) return 2;
+      return threat ? 1 : 0;
+    default:
+      return 0;
+  }
+}
+
+/** IA: escolhe e ativa sozinha a habilidade mais oportuna do próprio herói. */
+function updateAIAbilities(match: MatchState, _deltaMs: number): void {
   const player = match.aiPlayer;
   const system = player.abilitySystem;
   const now = match.nowMs;
-  const ball = match.ball;
 
-  // A IA defende à direita: perto do próprio gol prioriza defesa; longe, ataque.
-  const defending = ball.pos.x > match.field.width * 0.58 || ball.vel.x > 280;
-  const ready = Object.values(system.abilities).filter((runtime) => {
-    if (!AI_ABILITY_POOL.has(runtime.abilityId)) return false;
-    if (runtime.cooldownRemainingMs > 0) return false;
-    if (runtime.armedUntilMs !== null) return false;
-    if (runtime.activeUntilMs !== null && now < runtime.activeUntilMs) return false;
-    return system.bar.current >= getAbility(runtime.abilityId).cost;
-  });
-  if (ready.length === 0) return;
+  const candidates = Object.values(system.abilities)
+    .filter((runtime) => {
+      if (!AI_ABILITY_POOL.has(runtime.abilityId)) return false;
+      if (runtime.cooldownRemainingMs > 0) return false;
+      if (runtime.armedUntilMs !== null) return false;
+      if (runtime.activeUntilMs !== null && now < runtime.activeUntilMs) return false;
+      return system.bar.current >= getAbility(runtime.abilityId).cost;
+    })
+    .map((runtime) => {
+      const ability = getAbility(runtime.abilityId);
+      return { runtime, ability, score: aiAbilityOpportunity(match, player, ability) };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || a.ability.cost - b.ability.cost);
+  if (candidates.length === 0) return;
 
-  // Prefere o tipo que combina com a jogada, mas nunca fica parada se o herói
-  // só tiver habilidades do outro tipo (ex.: Gulias com a bola no ataque).
-  const preferred = ready.filter(
-    (runtime) => (getAbility(runtime.abilityId).role === "defensivo") === defending,
-  );
-  const candidates = (preferred.length > 0 ? preferred : ready)
-    .sort((a, b) => getAbility(b.abilityId).cost - getAbility(a.abilityId).cost);
+  // Janela de reação: a IA não fica sorteado a cada frame, e sim avalia a cada
+  // intervalo curto. Dificuldade maior => reação mais rápida.
+  if (now < match.ai.abilityCheckAtMs) return;
+  const baseMs = clamp(1000 / (0.5 + match.ai.abilityRate), 400, 1600);
+  match.ai.abilityCheckAtMs = now + baseMs * (0.85 + Math.random() * 0.3);
 
-  // Probabilidade por segundo: independe do framerate e escala com a dificuldade.
-  const chance = 1 - Math.exp(-match.ai.abilityRate * (deltaMs / 1000));
-  if (Math.random() > chance) return;
-
-  for (const runtime of candidates) {
-    const result = tryActivateAbility(match, runtime.abilityId, now, player);
-    if (result.ok) break;
-  }
+  tryActivateAbility(match, candidates[0]!.runtime.abilityId, now, player);
 }
 
 /** Rechutes automáticos do Combo Breaker: o jogador "pega" a bola no pé. */
 function updateCombo(match: MatchState): void {
   const combo = match.combo;
-  if (!combo || match.elastic || match.nowMs < combo.nextAtMs) return;
+  if (!combo || match.elastic || match.choreography || match.nowMs < combo.nextAtMs) return;
+  if (match.ball.explosionCompressMs > 0 || match.ball.explosionHopRemainingMs > 0) return;
 
   const rod = getPlayerRod(match, combo.rodId);
   if (!rod) {
@@ -1240,6 +1593,8 @@ function tryAutoExecuteAbility(
 /**
  * Habilidades que não podem ser copiadas: dependem de estado global criado no
  * herói original (rebote, roletada, elástico, combo) ou de outro empréstimo.
+ * As novas habilidades podem ser copiadas: coreografia e rotação guardam o lado
+ * dono no próprio estado, e a Explosão vive na bola.
  */
 const COPY_BLOCKED = new Set(["copia", "roletada", "rebote", "combo_breaker", "elastico"]);
 
@@ -1312,6 +1667,7 @@ export function tryActivateAbility(
     let extraMs = 0;
     if (abilityId === "mao_grande") extraMs = (stats.goalkeeping - STAT_REFERENCE) * 12;
     if (abilityId === "zaga_magnetica") extraMs = (stats.defense - STAT_REFERENCE) * 12;
+    if (abilityId === "rotacionar") extraMs = (stats.ballControl - STAT_REFERENCE) * 12;
     if (runtime && runtime.activeUntilMs !== null && extraMs !== 0) {
       runtime.activeUntilMs += clamp(Math.round(extraMs), -600, 900);
     }
@@ -1338,6 +1694,24 @@ export function tryActivateAbility(
     // O estado é global e pertence ao jogador local; a IA não usa esta habilidade.
     if (abilityId === "rebote" && player.side === "left") {
       match.reboteCounterAvailable = true;
+    }
+
+    // Rotacionar: liga o estado do meio girando. O estado guarda o lado dono,
+    // então funciona tanto no jogador local quanto em uma habilidade copiada.
+    if (abilityId === "rotacionar" && runtime && runtime.activeUntilMs !== null) {
+      const durationMs = Math.max(1000, runtime.activeUntilMs - nowMs);
+      const mods = getPlayerModifiers(match, player, "meio");
+      match.rotation = {
+        ownerSide: player.side,
+        rodId: "meio",
+        remainingMs: durationMs,
+        totalMs: durationMs,
+        angle: 0,
+        angularSpeed: mods.rotationSpeed,
+        kickUsed: false,
+        color: ABILITY_COLORS.rotacionar ?? "#ff9f43",
+      };
+      addEffect(match, match.ball.pos.x, match.ball.pos.y, 0.9, match.rotation.color, "ability", "ROTACIONAR");
     }
 
     // Tenta executar na hora; se não houver bola perto, mantém armada.
@@ -1382,7 +1756,8 @@ export function performKickForPlayer(
   reach?: { x: number; y: number },
 ): void {
   const rod = getPlayerRod(match, rodId, player);
-  if (!rod || match.elastic) return;
+  if (!rod || match.elastic || match.choreography) return;
+  if (match.ball.explosionCompressMs > 0 || match.ball.explosionHopRemainingMs > 0) return;
 
   // Consome habilidades armadas ANTES de calcular o chute, para o bônus valer nele.
   for (const abilityId of getEquippedAbilityIds(match, player)) {
@@ -1400,7 +1775,14 @@ export function performKickForPlayer(
     // A carga ofensiva usa a força real do chute, não só o tempo de carga.
     registerAbilityCharge(match, player, { type: "attack_kick", power: effectivePower });
   }
+  // Coreografia e Explosão já assumiram a bola dentro de applyKickToBall.
+  const ballTaken = match.choreography !== null
+    || match.ball.explosionCompressMs > 0
+    || match.ball.explosionHopRemainingMs > 0;
   // Elástico e Combo usam estado global do jogador local; a IA não possui essas habilidades.
+  if (ballTaken) {
+    return;
+  }
   if (hit && mods.elastic && player.side === "left") {
     // O Elástico assume a bola: a órbita decide quando e de onde o ataque sai.
     match.combo = null;

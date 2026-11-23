@@ -1,6 +1,6 @@
 import { ABILITIES, ABILITY_COLORS, getAbilityPowerMult } from "../domain/abilities";
 import { listHeroes } from "../domain/heroes";
-import { ROLE_CHARGE_SUMMARY } from "../domain/roles";
+import { ROLE_CHARGE_SUMMARY, ROLE_IDENTITY_SUMMARY } from "../domain/roles";
 import { STAT_BUDGET, STAT_MAX, STAT_MIN, STAT_REFERENCE, STAT_STEP } from "../domain/stats";
 import type { AbilityTrigger, HeroDefinition, HeroStats, RodId, Role } from "../domain/types";
 import { keyLabel, type ControlScheme } from "../game/input";
@@ -147,11 +147,13 @@ function statBars(stats: HeroStats, compact = false): string {
 }
 
 function abilityChips(hero: HeroDefinition): string {
-  return hero.abilities.map((id) => {
-    const ability = ABILITIES[id];
-    if (!ability) return "";
-    return `<button type="button" class="ability-chip" data-ability-info-id="${escapeHtml(id)}" data-ability-count="${hero.abilities.length}" style="--chip-color:${ABILITY_COLORS[id] ?? "#ffd9a0"}">${escapeHtml(ability.name)}</button>`;
-  }).join("");
+  return [...hero.abilities]
+    .sort((a, b) => (ABILITIES[a]?.cost ?? 0) - (ABILITIES[b]?.cost ?? 0))
+    .map((id) => {
+      const ability = ABILITIES[id];
+      if (!ability) return "";
+      return `<button type="button" class="ability-chip" data-ability-info-id="${escapeHtml(id)}" data-ability-count="${hero.abilities.length}" style="--chip-color:${ABILITY_COLORS[id] ?? "#ffd9a0"}">${escapeHtml(ability.name)}</button>`;
+    }).join("");
 }
 
 /** Painel de detalhes: o que faz, onde usa, custo e bônus por quantidade. */
@@ -187,7 +189,7 @@ function heroCard(hero: HeroDefinition, selected: boolean): string {
         ${heroAvatar(hero)}
         ${hero.bodyImage ? `<img class="hero-body-thumb" src="${escapeHtml(hero.bodyImage)}" alt="">` : ""}
         <div>
-          <span class="role-badge">${ROLE_LABELS[hero.role]}</span>
+          <span class="role-badge" title="${ROLE_IDENTITY_SUMMARY[hero.role]}">${ROLE_LABELS[hero.role]}</span>
           <h3>${escapeHtml(hero.name)}</h3>
         </div>
         ${hero.custom ? '<span class="custom-badge">CRIADO</span>' : ""}
@@ -282,7 +284,7 @@ export function menuScreen(profile: PlayerProfile): string {
             <span class="menu-label">PERSONAGEM ATUAL</span>
             ${heroAvatar(hero, "large")}
             <h2>${escapeHtml(hero.name)}</h2>
-            <span class="role-badge">${ROLE_LABELS[hero.role]}</span>
+            <span class="role-badge" title="${ROLE_IDENTITY_SUMMARY[hero.role]}">${ROLE_LABELS[hero.role]}</span>
             <div class="ability-chips">${abilityChips(hero)}</div>
             <button type="button" class="btn ghost btn-sm" data-action="select">Trocar personagem</button>
           </div>
@@ -307,7 +309,7 @@ export function selectScreen(profile: PlayerProfile): string {
           <h1>Escolha seu herói</h1>
           <p>Cada personagem tem atributos, funções e uma barra de especial diferente.</p>
         </div>
-        <span class="eyebrow">5 heróis · edite qualquer um</span>
+        <span class="eyebrow">${heroes.length} heróis · edite qualquer um</span>
       </div>
       <div class="hero-grid">${heroes.map((hero) => heroCard(hero, hero.id === profile.selectedHeroId)).join("")}</div>
       <section class="ability-detail" data-ability-info>
@@ -529,7 +531,7 @@ export function howToScreen(scheme: ControlScheme, profile?: PlayerProfile | nul
           <h2>Habilidades (${Object.keys(ABILITIES).length} no total)</h2>
           <p><b style="color:#b4691a">Auto-disparo:</b> se a bola estiver perto da barra da habilidade, ela <b>pega a bola e chuta sozinha</b> — não precisa segurar <kbd>${escapeHtml(keyLabel(scheme.kickForward))}</kbd>. Se não estiver, fica armada para o próximo chute.</p>
           <p>Cada habilidade responde ao atributo correspondente: chute, controle, defesa ou goleiro. Personagens com o stat alto deixam a mesma habilidade mais forte.</p>
-          <p><b style="color:#ffe7a3">Cópia (Paulo):</b> empresta uma habilidade de outro herói por alguns segundos, aparecendo como slot extra sem custo. <b style="color:#b28cff">Roletada (Jhonas):</b> bomba fortíssima, porém descontrolada, que trava o manete por 1,4 s. <b style="color:#7cffb2">Rebote (Kenji):</b> o boneco fica no aguardo e contra-ataca forte se a bola bater nele.</p>
+          <p><b style="color:#ffe7a3">Cópia (Paulo):</b> empresta uma habilidade de outro herói por alguns segundos, aparecendo como slot extra sem custo. <b style="color:#b28cff">Roletada (Jhonas):</b> bomba fortíssima, porém descontrolada, que trava o manete por 1,4 s. <b style="color:#7cffb2">Rebote (Kenji):</b> o boneco fica no aguardo e contra-ataca forte se a bola bater nele. <b style="color:#7ee8fa">Os Gêmeos</b> fazem passes coreografados entre barras e <b style="color:#ff9f43">o Churrasqueiro</b> gira o meio e estoura a bola rumo ao gol.</p>
           <ul class="ability-list">${abilityRows}</ul>
         </div>
         <div class="howto-card">
@@ -551,6 +553,7 @@ export function howToScreen(scheme: ControlScheme, profile?: PlayerProfile | nul
             <b>Defensivo:</b> ${ROLE_CHARGE_SUMMARY.defensivo}<br>
             <b>Coringa:</b> ${ROLE_CHARGE_SUMMARY.coringa}
           </p>
+          <p><b>Identidade de role:</b> ofensivo ${ROLE_IDENTITY_SUMMARY.ofensivo} defensivo ${ROLE_IDENTITY_SUMMARY.defensivo} coringa ${ROLE_IDENTITY_SUMMARY.coringa}</p>
           <h2>Imagens do herói</h2>
           <p>No criador você pode enviar uma foto <b>só do rosto</b> (aparece na borda da mesa) e outra de <b>corpo inteiro</b> (aparece nos cartões). Sem upload, o jogo usa placeholders.</p>
         </div>
@@ -645,7 +648,7 @@ export function creatorScreen(profile: PlayerProfile, draft: HeroDraft): string 
                     </span>
                   </label>`).join("")}
               </div>
-              <small class="budget-hint">Quanto menos habilidades, maior o bônus: 2 habs = +25%, 3 habs = +12%, 4 habs = padrão. Passe o mouse ou clique no nome para ver os detalhes.</small>
+              <small class="budget-hint">Qualquer personagem pode usar qualquer habilidade — não existe habilidade exclusiva. Quanto menos habilidades, maior o bônus: 2 habs = +25%, 3 habs = +12%, 4 habs = padrão. Passe o mouse ou clique no nome para ver os detalhes.</small>
             </div>
           </div>
         </div>

@@ -1,6 +1,15 @@
 import type { AbilitySystemState } from "../game/ability-system";
 import type { BallState } from "../game/ball";
-import type { ComboState, ElasticState, KickEffect, MatchScore, MatchToast, MatchState } from "../game/match";
+import type {
+  ChoreographyState,
+  ComboState,
+  ElasticState,
+  KickEffect,
+  MatchScore,
+  MatchToast,
+  MatchState,
+  RotationState,
+} from "../game/match";
 import type { RodState } from "../game/rods";
 
 /**
@@ -23,6 +32,8 @@ export interface MatchSnapshot {
   toast: MatchToast | null;
   combo: ComboState | null;
   elastic: ElasticState | null;
+  choreography: ChoreographyState | null;
+  rotation: RotationState | null;
   lockMovementUntilMs: number;
   reboteCounterAvailable: boolean;
   copiedAbilityId: string | null;
@@ -57,6 +68,8 @@ export function serializeMatch(match: MatchState): MatchSnapshot {
     toast: match.toast ? { ...match.toast } : null,
     combo: match.combo ? { ...match.combo } : null,
     elastic: match.elastic ? { ...match.elastic } : null,
+    choreography: match.choreography ? { ...match.choreography } : null,
+    rotation: match.rotation ? { ...match.rotation } : null,
     lockMovementUntilMs: match.lockMovementUntilMs,
     reboteCounterAvailable: match.reboteCounterAvailable,
     copiedAbilityId: match.copiedAbilityId,
@@ -83,6 +96,8 @@ export function applySnapshot(match: MatchState, snapshot: MatchSnapshot): void 
   match.toast = snapshot.toast ? { ...snapshot.toast } : null;
   match.combo = snapshot.combo ? { ...snapshot.combo } : null;
   match.elastic = snapshot.elastic ? { ...snapshot.elastic } : null;
+  match.choreography = snapshot.choreography ? { ...snapshot.choreography } : null;
+  match.rotation = snapshot.rotation ? { ...snapshot.rotation } : null;
   match.lockMovementUntilMs = snapshot.lockMovementUntilMs;
   match.reboteCounterAvailable = snapshot.reboteCounterAvailable;
   match.copiedAbilityId = snapshot.copiedAbilityId;

@@ -1,5 +1,14 @@
 import type { ChargeEvent, ChargeEventType, Role } from "./types";
 
+/** Bônus fixo de identidade, aplicado depois dos stats e das habilidades. */
+export const ROLE_IDENTITY_BONUS = 0.05;
+
+export const ROLE_IDENTITY_SUMMARY: Record<Role, string> = {
+  ofensivo: `+${Math.round(ROLE_IDENTITY_BONUS * 100)}% de força de chute.`,
+  defensivo: `+${Math.round(ROLE_IDENTITY_BONUS * 100)}% de drenagem da bola no contato.`,
+  coringa: `+${Math.round(ROLE_IDENTITY_BONUS * 100)}% de velocidade da barra.`,
+};
+
 /** Ganho de um ofensivo com um chute de força 1,0 (carga cheia, stat na média). */
 const ATTACK_GAIN_PER_POWER = 4;
 /** Ganho de um defensivo ao defender um impacto 1,0. */

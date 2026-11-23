@@ -28,6 +28,7 @@ import {
   deleteDoc,
   type Firestore,
 } from "firebase/firestore";
+import { ABILITIES } from "../domain/abilities";
 import { HEROES } from "../domain/heroes";
 import { normalizeHeroStats } from "../domain/stats";
 import type { HeroDefinition } from "../domain/types";
@@ -55,6 +56,11 @@ export interface FirebaseService {
   saveSelectedHero(uid: string, heroId: string): Promise<void>;
   /** Elenco global: o mesmo para todos os jogadores, salvo na coleção `heroes`. */
   listHeroes(): Promise<HeroDefinition[]>;
+  /**
+   * Sobe para a nuvem os heróis oficiais e os personagens criados/editados fora
+   * da conta (modo sem login), sem apagar documentos nem edições existentes.
+   */
+  syncHeroes(localHeroes?: HeroDefinition[]): Promise<HeroDefinition[]>;
   saveHero(hero: HeroDefinition): Promise<void>;
 }
 
@@ -131,7 +137,7 @@ function toHeroDocument(hero: HeroDefinition): Record<string, unknown> {
     color: hero.color ?? "",
     faceImage: hero.faceImage ?? "",
     bodyImage: hero.bodyImage ?? "",
-    custom: false,
+    custom: hero.custom === true,
   };
 }
 
@@ -146,12 +152,41 @@ function fromHeroDocument(id: string, data: Record<string, unknown>): HeroDefini
     color: hero.color || HEROES[id]?.color,
     faceImage: hero.faceImage || undefined,
     bodyImage: hero.bodyImage || undefined,
-    custom: false,
+    // Documentos antigos marcavam tudo como false; o prefixo recupera os criados.
+    custom: data.custom === true || id.startsWith("custom_"),
   };
 }
 
-function seedHeroes(): HeroDefinition[] {
+/** Elenco oficial atual do código-fonte (usado como seed e nas correções). */
+export function officialHeroes(): HeroDefinition[] {
   return Object.values(HEROES).map((hero) => ({ ...hero, custom: false }));
+}
+
+/**
+ * Correções de catálogo já publicadas. Só atinge heróis oficiais que ainda
+ * estão na versão antiga: remove a habilidade descontinuada sem apagar o resto
+ * de uma edição feita pelo jogador.
+ */
+function applyCatalogFixes(hero: HeroDefinition): HeroDefinition | null {
+  if (hero.id !== "allan" || hero.custom) return null;
+  if (!hero.abilities.includes("elastico")) return null;
+  return {
+    ...hero,
+    abilities: hero.abilities
+      .filter((id) => id !== "elastico")
+      .sort((a, b) => (ABILITIES[a]?.cost ?? 0) - (ABILITIES[b]?.cost ?? 0)),
+    description: hero.description.includes("elástico")
+      ? "Canhoneiro da mesa. Chute no limite de 100 e três formas de enganar a defesa: cruzador, fantasma e combo. Com três habilidades, cada uma ganha +12% de poder."
+      : hero.description,
+  };
+}
+
+function sortHeroDefinitions(heroes: HeroDefinition[]): HeroDefinition[] {
+  const order = new Map(Object.keys(HEROES).map((id, index) => [id, index]));
+  return [...heroes].sort(
+    (a, b) => (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.id) ?? Number.MAX_SAFE_INTEGER)
+      || a.name.localeCompare(b.name),
+  );
 }
 
 function defaultProfile(uid: string, displayName: string): PlayerProfile {
@@ -301,20 +336,46 @@ export class FirebaseWebService implements FirebaseService {
     );
   }
 
-  async listHeroes(): Promise<HeroDefinition[]> {
-    const snap = await getDocs(collection(getDb(), "heroes"));
-    if (snap.empty) {
-      // Seed inicial: grava o elenco oficial na coleção global uma única vez.
-      await Promise.all(seedHeroes().map((hero) =>
-        setDoc(doc(getDb(), "heroes", hero.id), {
+  async syncHeroes(localHeroes: HeroDefinition[] = []): Promise<HeroDefinition[]> {
+    const dbRef = getDb();
+    const snap = await getDocs(collection(dbRef, "heroes"));
+    const docs = new Map<string, HeroDefinition>(snap.docs.map((docSnap) => [
+      docSnap.id,
+      fromHeroDocument(docSnap.id, docSnap.data() as Record<string, unknown>),
+    ]));
+
+    // Oficiais primeiro; heróis locais (modo sem conta) preenchem as lacunas.
+    // Um id local igual a um oficial representa uma edição local pendente.
+    const candidates = new Map<string, HeroDefinition>();
+    for (const hero of officialHeroes()) candidates.set(hero.id, hero);
+    for (const hero of localHeroes) candidates.set(hero.id, hero);
+
+    const writes: Promise<void>[] = [];
+    for (const [id, candidate] of candidates) {
+      const stored = docs.get(id);
+      if (!stored) {
+        const hero = applyCatalogFixes(candidate) ?? candidate;
+        docs.set(id, hero);
+        writes.push(setDoc(doc(dbRef, "heroes", id), {
           ...toHeroDocument(hero), createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-        }),
-      ));
-      return seedHeroes();
+        }));
+        continue;
+      }
+      const fixed = applyCatalogFixes(stored);
+      if (!fixed) continue;
+      docs.set(id, fixed);
+      writes.push(setDoc(doc(dbRef, "heroes", id), {
+        abilities: fixed.abilities,
+        description: fixed.description,
+        updatedAt: serverTimestamp(),
+      }, { merge: true }));
     }
-    return snap.docs
-      .map((docSnap) => fromHeroDocument(docSnap.id, docSnap.data() as Record<string, unknown>))
-      .sort((a, b) => Object.keys(HEROES).indexOf(a.id) - Object.keys(HEROES).indexOf(b.id));
+    await Promise.all(writes);
+    return sortHeroDefinitions([...docs.values()]);
+  }
+
+  async listHeroes(): Promise<HeroDefinition[]> {
+    return this.syncHeroes();
   }
 
   async saveHero(hero: HeroDefinition): Promise<void> {
@@ -407,7 +468,8 @@ export async function getMatch(matchId: string): Promise<MatchRecord | null> {
 const LOCAL_KEY = "pimbocas.localProfile.v1";
 const HEROES_KEY = "pimbocas.heroes.v1";
 
-function readLocalHeroes(): HeroDefinition[] {
+/** Heróis salvos no navegador no modo "jogar sem conta". */
+export function readLocalHeroes(): HeroDefinition[] {
   try {
     const raw = localStorage.getItem(HEROES_KEY);
     if (raw) {
@@ -419,7 +481,7 @@ function readLocalHeroes(): HeroDefinition[] {
   } catch {
     // localStorage indisponível: usa o seed.
   }
-  const seeded = seedHeroes();
+  const seeded = officialHeroes();
   try { localStorage.setItem(HEROES_KEY, JSON.stringify(seeded)); } catch { /* noop */ }
   return seeded;
 }
@@ -467,7 +529,16 @@ export class FirebaseServiceStub implements FirebaseService {
     profile.selectedHeroId = heroId;
     this.saveProfile(profile);
   }
-  async listHeroes(): Promise<HeroDefinition[]> { return readLocalHeroes(); }
+  async syncHeroes(localHeroes: HeroDefinition[] = []): Promise<HeroDefinition[]> {
+    const merged = new Map<string, HeroDefinition>();
+    for (const hero of officialHeroes()) merged.set(hero.id, hero);
+    for (const hero of readLocalHeroes()) merged.set(hero.id, hero);
+    for (const hero of localHeroes) merged.set(hero.id, hero);
+    const heroes = sortHeroDefinitions([...merged.values()].map((hero) => applyCatalogFixes(hero) ?? hero));
+    try { localStorage.setItem(HEROES_KEY, JSON.stringify(heroes)); } catch { /* noop */ }
+    return heroes;
+  }
+  async listHeroes(): Promise<HeroDefinition[]> { return this.syncHeroes(); }
   async saveHero(hero: HeroDefinition): Promise<void> {
     const heroes = readLocalHeroes();
     const next = heroes.some((h) => h.id === hero.id)

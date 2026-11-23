@@ -14,6 +14,7 @@ import {
   createFirebaseService,
   FirebaseServiceStub,
   mapAuthError,
+  readLocalHeroes,
   type FirebaseService,
   type PlayerProfile,
 } from "../net/firebase";
@@ -304,13 +305,22 @@ export class AppFlow {
     }
   }
 
-  private async loadGlobalHeroes(): Promise<void> {
+  private async loadGlobalHeroes(localHeroes?: HeroDefinition[]): Promise<void> {
     try {
-      // O elenco é global: carrega antes do perfil para a seleção já usar as
-      // edições salvas no Firestore (ou no stub local, sem Firebase).
-      for (const hero of await this.service.listHeroes()) registerCustomHero(hero);
+      // Com `localHeroes`, sobe para a nuvem os heróis criados no modo sem conta
+      // e recarrega o elenco global já sincronizado. Sem eles, apenas carrega.
+      const heroes = localHeroes
+        ? await this.service.syncHeroes(localHeroes)
+        : await this.service.listHeroes();
+      for (const hero of heroes) registerCustomHero(hero);
     } catch (error) {
       console.warn("[Pimbocas] não foi possível carregar o elenco global:", error);
+      // Mesmo sem banco, o elenco oficial corrigido e os heróis locais continuam
+      // disponíveis nesta sessão.
+      const officialIds = new Set(Object.keys(HEROES));
+      const fallback = [...Object.values(HEROES), ...readLocalHeroes()
+        .filter((hero) => !officialIds.has(hero.id))];
+      for (const hero of fallback) registerCustomHero(hero);
     }
   }
 
@@ -319,7 +329,7 @@ export class AppFlow {
     await this.loadGlobalHeroes();
     try {
       const restored = await this.service.restoreSession();
-      if (restored && !this.profile) this.acceptProfile(restored);
+      if (restored && !this.profile) await this.acceptProfile(restored);
     } catch {
       // Sessão inválida: mantém a tela de login.
     }
@@ -391,9 +401,12 @@ export class AppFlow {
     this.show("menu");
   }
 
-  private acceptProfile(profile: PlayerProfile): void {
+  private async acceptProfile(profile: PlayerProfile): Promise<void> {
+    // Ao entrar (inclusive com conta), publica no Firestore todos os heróis que
+    // estavam só no navegador e aplica as correções oficiais pendentes.
+    await this.loadGlobalHeroes(readLocalHeroes());
     // O elenco vem da coleção global. customHeroes do perfil é legado e
-    // ignorado para garantir que só os cinco heróis oficiais apareçam.
+    // ignorado para garantir que só os heróis oficiais apareçam.
     const selectedHeroId = listHeroes().some((h) => h.id === profile.selectedHeroId)
       ? profile.selectedHeroId
       : "paulo";
@@ -555,16 +568,15 @@ export class AppFlow {
       case "controls-back": this.show("menu"); break;
       case "start-match": this.startMatch(); break;
       case "google":
-        void this.run(async () => this.acceptProfile(await this.service.signInWithGoogle()));
+        void this.run(async () => { await this.acceptProfile(await this.service.signInWithGoogle()); });
         break;
       case "guest":
-        void this.run(async () => this.acceptProfile(await this.service.signInAsGuest()));
+        void this.run(async () => { await this.acceptProfile(await this.service.signInAsGuest()); });
         break;
       case "local":
         void this.run(async () => {
           this.service = this.localService;
-          await this.loadGlobalHeroes();
-          this.acceptProfile(await this.localService.restoreSession() ?? await this.localService.signIn());
+          await this.acceptProfile(await this.localService.restoreSession() ?? await this.localService.signIn());
         });
         break;
       case "logout":
@@ -591,7 +603,7 @@ export class AppFlow {
         const profile = this.authMode === "register"
           ? await this.service.signUpWithEmail(name, email, password)
           : await this.service.signInWithEmail(email, password);
-        this.acceptProfile(profile);
+        await this.acceptProfile(profile);
       });
       return;
     }

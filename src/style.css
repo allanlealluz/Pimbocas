@@ -193,6 +193,19 @@ canvas {
 .ability-marker.active { opacity: 1; color: #fff; text-shadow: 0 0 16px currentColor, 0 0 6px currentColor, 0 1px 4px #000; }
 .ability-marker.cooling { opacity: 0.35; }
 .ability-marker.borrowed { font-style: italic; text-decoration: underline dashed rgba(255, 231, 163, 0.7); text-underline-offset: 3px; }
+.marker-slot {
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  margin-right: 4px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-size: 0.58rem;
+  font-weight: 900;
+  line-height: 1;
+  vertical-align: middle;
+}
 @keyframes markerPulse { from { text-shadow: 0 1px 4px #000; } to { text-shadow: 0 0 16px currentColor, 0 0 6px currentColor, 0 1px 4px #000; } }
 
 /* Energia do adversário */

@@ -223,6 +223,23 @@ export interface AbilityModifiers {
   /** Rebote */
   rebote: boolean;
   rebotePower: number;
+  /** Os Gêmeos: passe coreografado entre barras */
+  choreography: boolean;
+  choreographyTarget: RodId | null;
+  choreographySpeed: number;
+  choreographyPower: number;
+  /** Churrasqueiro: meio girando */
+  rotation: boolean;
+  rotationSpeed: number;
+  /** Churrasqueiro: compressão + pulo + saída rodando */
+  explosion: boolean;
+  explosionSpeedMult: number;
+  explosionCompressMs: number;
+  explosionHopMs: number;
+  explosionHopDistance: number;
+  explosionHopHeight: number;
+  explosionSpin: number;
+  explosionRollingMs: number;
   activeIds: string[];
 }
 
@@ -264,6 +281,20 @@ export const NEUTRAL_MODIFIERS: AbilityModifiers = {
   lockMovementMs: 0,
   rebote: false,
   rebotePower: 1,
+  choreography: false,
+  choreographyTarget: null,
+  choreographySpeed: 0,
+  choreographyPower: 1,
+  rotation: false,
+  rotationSpeed: 0,
+  explosion: false,
+  explosionSpeedMult: 1,
+  explosionCompressMs: 0,
+  explosionHopMs: 0,
+  explosionHopDistance: 0,
+  explosionHopHeight: 0,
+  explosionSpin: 0,
+  explosionRollingMs: 0,
   activeIds: [],
 };
 
@@ -348,6 +379,27 @@ export function getAbilityModifiers(
       case "rebote":
         mods.rebote = true;
         mods.rebotePower = Math.max(mods.rebotePower, ability.effect.rebotePower ?? 1.25);
+        break;
+      case "chute_duplo":
+      case "sequencia_toques":
+        mods.choreography = true;
+        mods.choreographyTarget = ability.effect.choreographyTarget ?? (ability.id === "chute_duplo" ? "ataque" : "meio");
+        mods.choreographySpeed = Math.max(mods.choreographySpeed, ability.effect.choreographySpeed ?? 400);
+        mods.choreographyPower = Math.max(mods.choreographyPower, ability.effect.choreographyPower ?? 1.2);
+        break;
+      case "rotacionar":
+        mods.rotation = true;
+        mods.rotationSpeed = Math.max(mods.rotationSpeed, ability.effect.rotationSpeed ?? 7);
+        break;
+      case "explosao":
+        mods.explosion = true;
+        mods.explosionSpeedMult = Math.max(mods.explosionSpeedMult, ability.effect.explosionSpeedMult ?? 1.25);
+        mods.explosionCompressMs = Math.max(mods.explosionCompressMs, ability.effect.explosionCompressMs ?? 260);
+        mods.explosionHopMs = Math.max(mods.explosionHopMs, ability.effect.explosionHopMs ?? 220);
+        mods.explosionHopDistance = Math.max(mods.explosionHopDistance, ability.effect.explosionHopDistance ?? 78);
+        mods.explosionHopHeight = Math.max(mods.explosionHopHeight, ability.effect.explosionHopHeight ?? 26);
+        mods.explosionSpin = Math.max(mods.explosionSpin, ability.effect.explosionSpin ?? 22);
+        mods.explosionRollingMs = Math.max(mods.explosionRollingMs, ability.effect.explosionRollingMs ?? 1600);
         break;
     }
     mods.activeIds.push(ability.id);

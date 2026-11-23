@@ -47,10 +47,10 @@ src/
 
 1. **Login / cadastro**: e-mail e senha, Google, convidado (anonymous) ou "Jogar sem conta" (modo local, salvo no `localStorage`).
 2. **Menu**: mostra o personagem atual, acesso a modos, seleção, criador e guia.
-3. **Modo de jogo**: por enquanto só **Contra a IA** está disponível; Online 1v1 e Torneio aparecem como "em breve". A dificuldade da IA altera velocidade de perseguição, chance de chute, herói e freqüência com que ela usa habilidades: **Fácil** → Léo Coringa, **Médio** → Rafa Artilheiro, **Difícil** → Duda Muralha.
+3. **Modo de jogo**: **Contra a IA** e **Online 1v1 por sala** estão disponíveis. A dificuldade da IA altera velocidade de perseguição, chance de chute, herói e freqüência com que ela usa habilidades: **Fácil** → Kenji, **Médio** → Jhonas, **Difícil** → Gulias.
 4. **Seleção de personagens**: cartões com atributos, role, habilidades e formato da barra; personagens criados podem ser editados ou excluídos.
-5. **Editor de heróis**: qualquer um dos cinco heróis oficiais pode ser editado (nome, cor, role, atributos com orçamento de **200 pontos**, formato da barra, **de 2 a 4 habilidades** e uploads opcionais de rosto/corpo). Imagens são reduzidas no navegador para data URL antes de salvar. As edições vão para a coleção global `heroes` no Firestore e valem para todos os jogadores; sem Firebase, ficam no `localStorage`.
-6. **Visual**: login e menus usam um tema claro de boteco (azulejos, balcão de madeira, garrafas verdes/amarelas, luminárias e uma mesa de pebolim em CSS). Na seleção, passe o mouse ou clique no nome de uma habilidade para ver descrição, barra, gatilho, custo, recuperação e bônus de poder.
+5. **Editor de heróis**: qualquer um dos sete heróis oficiais pode ser editado (nome, cor, role, atributos com orçamento de **200 pontos**, formato da barra, **de 2 a 4 habilidades** e uploads opcionais de rosto/corpo). Imagens são reduzidas no navegador para data URL antes de salvar. As edições vão para a coleção global `heroes` no Firestore e valem para todos os jogadores; sem Firebase, ficam no `localStorage`.
+6. **Visual**: tema arcade/esports escuro com laranja, ciano e lima. Na seleção, passe o mouse ou clique no nome de uma habilidade para ver descrição, barra, gatilho, custo, recuperação e bônus de poder.
 7. **Partida**: o campo ocupa a tela. O botão "☰ Menu" (ou `Esc`) abre o menu da partida, com **Continuar**, **Reiniciar partida**, **Trocar personagem** e **Voltar ao menu**. A simulação fica pausada enquanto o menu está aberto.
 
 O elenco é persistido na coleção global `heroes` do Firestore (ou no modo local, quando sem conta). O herói selecionado fica no perfil do jogador.
@@ -68,6 +68,18 @@ O elenco é persistido na coleção global `heroes` do Firestore (ou no modo loc
     - **Coringa**: recebe **30%** do ganho ofensivo e **30%** do defensivo.
   - Gols e passes úteis dão um bônus fixo menor.
 - Cooldown é por habilidade, independente da barra.
+
+## Identidade de role
+
+Além da forma de carregar a barra, a role dá um bônus fixo de **5%**, aplicado depois dos stats e do bônus por quantidade de habilidades:
+
+| Role | Bônus |
+|---|---|
+| Ofensivo | **+5% de força de chute** |
+| Defensivo | **+5% de drenagem da bola** no contato |
+| Coringa | **+5% de velocidade da barra** |
+
+É um empurrão pequeno de identidade: não substitui os atributos, que continuam sendo o principal fator de diferença entre os heróis.
 
 ## Poder por quantidade de habilidades
 
@@ -109,17 +121,19 @@ Todos os heróis base somam exatamente 200 pontos.
 
 ## Heróis e habilidades
 
-O elenco oficial tem exatamente cinco heróis (todos com 200 pontos):
+O elenco oficial tem exatamente sete heróis (todos com 200 pontos):
 
 | Herói | Role | Barra | Habilidades | Bônus |
 |---|---|---|---|---|
-| **Allan** | Ofensivo | 20 / 30 / 50 | Cruzador Estelar, Chute Fantasma, Combo Breaker, Elástico | padrão |
+| **Allan** | Ofensivo | 20 / 30 / 50 | Combo Breaker, Chute Fantasma, Cruzador Estelar | +12% |
 | **Paulo** | Coringa | 30 / 30 / 40 | Chute Relâmpago, **Cópia** | +25% |
 | **Jhonas a Sombra** | Ofensivo | 50 / 50 | Chute de Goleiro, **Roletada** | +25% |
 | **Kenji** | Coringa | 20 / 30 / 50 | Leitura de Jogo, Chute Diagonal, Bloqueio Pesado, Rebote | padrão |
 | **Gulias** | Defensivo | 50 / 50 | **Força Bruta**, **Chute de Goleiro**, **Mão Grande** | +12% |
+| **Os Gêmeos** | Defensivo | 30 / 30 / 40 | **Chute Duplo**, Rebote, **Sequência de Toques** | +12% |
+| **Churrasqueiro** | Coringa | 50 / 50 | **Rotacionar**, **Explosão** | +25% |
 
-**Allan** é o canhoneiro da mesa: `100 / 40 / 35 / 15 / 10` (total 200), cor `#ff6bd6`. Ele troca quase tudo pelo chute mais forte do jogo.
+**Allan** é o canhoneiro da mesa: `100 / 40 / 35 / 15 / 10` (total 200), cor `#ff6bd6`. Ele troca quase tudo pelo chute mais forte do jogo e usa três habilidades — Combo Breaker, Chute Fantasma e Cruzador Estelar — com **+12% de poder** cada. O Elástico não faz parte do kit dele.
 
 **Paulo** é o ladrão de jogadas: `60 / 55 / 45 / 20 / 20` (total 200). A **Cópia** rouba uma habilidade de outro herói na mesa — priorizando o adversário — por 9 s. O slot copiado aparece no HUD, não gasta energia e **só dispara quando você aperta a tecla dele**.
 
@@ -129,9 +143,13 @@ O elenco oficial tem exatamente cinco heróis (todos com 200 pontos):
 
 **Gulias** é o muro: `45 / 55 / 10 / 80 / 10` (total 200). Defesa muito alta, força e controle acima da média, mas lentidão extrema. Usa **Força Bruta**, **Chute de Goleiro** e **Mão Grande**.
 
-### As 15 habilidades
+**Os Gêmeos** são a defesa equilibrada: `40 / 50 / 45 / 45 / 20` (total 200). O **Chute Duplo** leva a bola do meio ao ataque num passe alinhado e termina com arremate reforçado; a **Sequência de Toques** sai do zagueiro até o meio devagar, colada na linha do boneco que vai receber. Compartilham o **Rebote** com o Kenji.
 
-Todas respondem ao atributo correspondente — personagens com o stat alto deixam a habilidade mais forte.
+**Churrasqueiro** é o coringa da grelha: `55 / 45 / 50 / 30 / 20` (total 200). **Rotacionar** faz o meio-campo girar por ~3,2 s e devolver a bola na direção de onde ela veio (frente ou trás). **Explosão** comprime a bola, dá um pulo curto à frente e a solta rodando ao gol. Como são só duas habilidades, cada uma tem **+25% de poder**.
+
+### As 19 habilidades
+
+Todas respondem ao atributo correspondente — personagens com o stat alto deixam a habilidade mais forte. **Não existe habilidade exclusiva:** no criador, qualquer herói pode equipar qualquer uma das 19, incluindo Mão Grande, Chute Diagonal e Explosão. O negrito na tabela dos heróis apenas destaca a habilidade característica do herói oficial.
 
 | Habilidade | Custo | Barra | Efeito |
 |---|---|---|---|
@@ -147,21 +165,25 @@ Todas respondem ao atributo correspondente — personagens com o stat alto deixa
 | Chute Relâmpago | 25 | meio | Bate na quina e volta mirando o gol; escala com `kickPower` |
 | Elástico | 40 | ataque | Bola orbita o boneco entre 1 s e 5 s antes de sair; escala com `ballControl` |
 | Força Bruta | 50 | meio | Bola descontrolada, muito giro e quicadas elásticas; escala com `kickPower` |
-| Cópia | 30 | qualquer | Empresta uma habilidade de outro herói por 9 s como slot extra (sem custo); a escolha preza a região da bola |
+| Cópia | 30 | qualquer | Empresta uma habilidade de outro herói por 9 s como slot extra (sem custo); prioriza o adversário |
 | Roletada | 40 | qualquer | Chute muito mais forte e sem controle; trava o manete por ~1,4 s |
 | Rebote | 30 | goleiro/defesa | Boneco no aguardo por 3,2 s; se a bola bater nele, contra-ataca forte (1 vez por ativação) |
+| Chute Duplo | 30 | meio | Passe do meio para um atacante, perfeitamente alinhado, com arremate final reforçado |
+| Sequência de Toques | 25 | defesa | Toque devagar do zagueiro ao meio na linha exata do boneco receptor |
+| Rotacionar | 35 | meio | Meio gira por ~3,2 s e devolve a primeira bola que chegar para frente ou para trás |
+| Explosão | 45 | meio/ataque | Comprime, pula um pouco à frente e sai rodando ao gol com giro extra |
 
 ### Auto-disparo (facilitar o uso)
 
 Ao ativar com `1-4`, a habilidade verifica se a bola está perto de uma barra válida (alcance generoso de ~110 px horizontal / 78 px vertical). Se estiver, **ela pega a bola e executa o chute ou a defesa na hora**, com força máxima — você nem precisa segurar `→`/`←`. Se a bola estiver longe, a habilidade fica armada e disparada no próximo chute manual, como antes.
 
-Isso vale para todas as habilidades de chute/defesa, inclusive Chute Diagonal e Bloqueio Pesado. O nome de cada habilidade aparece no termômetro na altura do seu custo.
+Isso vale para todas as habilidades de chute/defesa, inclusive Chute Diagonal, Bloqueio Pesado, Chute Duplo, Sequência de Toques e Explosão. Rotacionar é diferente: é ativada na hora e o meio fica girando até a bola chegar. O nome de cada habilidade aparece no termômetro na altura do seu custo.
 
 ### IA também joga com habilidades
 
 O adversário tem herói, barra de especial, carga por chutes/defesas e **usa as próprias habilidades sozinho**. A barra dele aparece no canto superior esquerdo com o nome do herói e os slots (acesos quando há energia, verdes quando estão ativos). Os avisos na tela vêm com o prefixo `IA ·`.
 
-- A cada dificuldade corresponde um herói e uma taxa de ativação: Fácil (Léo Coringa, 0,12/s), Médio (Rafa Artilheiro, 0,25/s) e Difícil (Duda Muralha, 0,4/s).
+- A cada dificuldade corresponde um herói e uma taxa de ativação: Fácil (Kenji, 0,12/s), Médio (Jhonas, 0,25/s) e Difícil (Gulias, 0,4/s).
 - Perto do próprio gol a IA prefere habilidades defensivas (Mão Grande, Zaga Magnética, Bloqueio Pesado, Chute de Goleiro); longe dele, prefere as ofensivas (Chute Diagonal, Relâmpago, Força Bruta, Cruzador, Fantasma). Se o herói só tiver um dos tipos, ele usa o que tiver.
 - A IA ganha energia com seus chutes e defesas e gasta a mesma energia que você para ativar cada habilidade. Ela também sofre os efeitos: Zaga Magnética atrai a bola, Mão Grande amplia a pegada e o Chute Relâmpago dela mira a quina **esquerda** e rebate para o gol.
 - O gol limpo do Chute de Goleiro vale **2 pontos para a IA** também.
@@ -256,13 +278,13 @@ npm run dev
 - [x] Física de bola/pé e feedback visual das habilidades.
 - [x] Atributos com significado próprio e orçamento de 200 pontos (heróis base e criados).
 - [x] Chutes fortes escalam de verdade; carga por role (ofensivo/defensivo/coringa 30%).
-- [x] 12 habilidades que escalam com os stats; poder extra para heróis com 2 ou 3 habilidades.
+- [x] 19 habilidades que escalam com os stats; poder extra para heróis com 2 ou 3 habilidades.
 - [x] Painel de detalhes das habilidades (barra, gatilho, custo, cooldown e bônus).
 - [x] Upload de rosto e corpo inteiro no criador (placeholders quando não há imagem).
 - [x] Menu dentro da partida: pausa, reiniciar, trocar personagem e voltar ao menu.
-- [x] Elenco oficial: Allan, Paulo (Cópia), Jhonas (Roletada), Kenji (Rebote) e Gulias (Mão Grande).
+- [x] Elenco oficial: Allan, Paulo (Cópia), Jhonas (Roletada), Kenji (Rebote), Gulias (Mão Grande), Os Gêmeos (coreografia) e Churrasqueiro (rotação/explosão).
 - [x] Queda natural da mesa puxando a bola para o gol em cada metade do campo.
-- [x] Tema claro de boteco no login e menus; campo limpo, sem títulos/painéis no jogo.
+- [x] Tema arcade/esports escuro no login e menus; campo limpo, sem títulos/painéis no jogo.
 - [x] Fogo na arena após 60 s sem gol, vitória por 3 pontos e stack ao chegar a 10.
 - [x] Transporte realtime da partida (PeerJS/WebRTC) e modo Online 1v1 por sala.
 - [x] UI de sala: criar, copiar código e entrar.
